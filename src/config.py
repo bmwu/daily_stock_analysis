@@ -70,7 +70,11 @@ from src.llm.hermes import (
     route_deployment_origins,
     route_has_hermes,
 )
-from src.scheduler import normalize_schedule_times
+from src.scheduler import (
+    ScheduleSlot,
+    normalize_schedule_slots,
+    normalize_schedule_times,
+)
 from src.utils.market_review_region import normalize_market_review_region_lenient
 
 logger = logging.getLogger(__name__)
@@ -1028,6 +1032,7 @@ class Config:
     schedule_enabled: bool = False            # 是否启用定时任务
     schedule_time: str = "18:00"              # 每日推送时间（HH:MM 格式）
     schedule_times: List[str] = field(default_factory=lambda: ["18:00"])
+    schedule_slots: List[ScheduleSlot] = field(default_factory=lambda: [ScheduleSlot(time="18:00")])
     schedule_run_immediately: bool = True     # 启动时是否立即执行一次
     run_immediately: bool = True              # 启动时是否立即执行一次（非定时模式）
     market_review_enabled: bool = True        # 是否启用大盘复盘
@@ -1144,6 +1149,7 @@ class Config:
             "SCHEDULE_ENABLED",
             "SCHEDULE_TIME",
             "SCHEDULE_TIMES",
+            "SCHEDULE_SLOTS",
             "SCHEDULE_RUN_IMMEDIATELY",
         }
     )
@@ -1610,6 +1616,11 @@ class Config:
             default='',
             prefer_env_file=True,
         )
+        schedule_slots_value = cls._resolve_env_value(
+            'SCHEDULE_SLOTS',
+            default='',
+            prefer_env_file=True,
+        )
 
         report_language_raw = cls._resolve_report_language_env_value(
             preexisting_report_language
@@ -1618,6 +1629,17 @@ class Config:
         report_show_llm_model = parse_env_bool(report_show_llm_model_raw, default=True)
         if report_show_llm_model_raw is not None and not report_show_llm_model_raw.strip():
             report_show_llm_model = False
+
+        schedule_fallback = (schedule_time_value or '18:00').strip() or '18:00'
+        schedule_slots = normalize_schedule_slots(
+            schedule_slots_value,
+            schedule_times=schedule_times_value,
+            fallback_time=schedule_fallback,
+        )
+        schedule_times = [slot.time for slot in schedule_slots] or normalize_schedule_times(
+            schedule_times_value,
+            fallback_time=schedule_fallback,
+        )
 
         return cls(
             stock_list=stock_list,
@@ -1981,11 +2003,9 @@ class Config:
                 default='false',
                 prefer_env_file=True,
             ).lower() == 'true',
-            schedule_time=(schedule_time_value or '18:00').strip() or '18:00',
-            schedule_times=normalize_schedule_times(
-                schedule_times_value,
-                fallback_time=(schedule_time_value or '18:00').strip() or '18:00',
-            ),
+            schedule_time=schedule_fallback,
+            schedule_times=schedule_times,
+            schedule_slots=schedule_slots,
             schedule_run_immediately=schedule_run_immediately,
             run_immediately=legacy_run_immediately,
             market_review_enabled=os.getenv('MARKET_REVIEW_ENABLED', 'true').lower() == 'true',

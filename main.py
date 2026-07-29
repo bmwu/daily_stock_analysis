@@ -27,7 +27,7 @@ import json
 import multiprocessing
 import os
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union, Sequence
 
 from dotenv import dotenv_values
 from src.config import setup_env
@@ -442,10 +442,34 @@ def parse_arguments() -> argparse.Namespace:
     return parser.parse_args()
 
 
+
+def _filter_stocks_by_markets(
+    stock_codes: List[str],
+    markets: Optional[Sequence[str]],
+) -> List[str]:
+    """Keep stocks belonging to selected markets; unrecognized codes fail-open."""
+    if not markets:
+        return list(stock_codes)
+    from src.core.trading_calendar import get_market_for_stock
+
+    market_set = {str(item).strip().lower() for item in markets if str(item).strip()}
+    if not market_set:
+        return list(stock_codes)
+
+    filtered: List[str] = []
+    for code in stock_codes:
+        mkt = get_market_for_stock(code)
+        if mkt is None or mkt in market_set:
+            filtered.append(code)
+    return filtered
+
+
 def _compute_trading_day_filter(
     config: Config,
     args: argparse.Namespace,
     stock_codes: List[str],
+    *,
+    market_review_region_override: Optional[str] = None,
 ) -> Tuple[List[str], Optional[str], bool]:
     """
     Compute filtered stock list and effective market review region (Issue #373).
@@ -458,6 +482,8 @@ def _compute_trading_day_filter(
     """
     force_run = getattr(args, 'force_run', False)
     if force_run or not getattr(config, 'trading_day_check_enabled', True):
+        if market_review_region_override is not None:
+            return (stock_codes, market_review_region_override, False)
         return (stock_codes, None, False)
 
     from src.core.trading_calendar import (
@@ -474,9 +500,17 @@ def _compute_trading_day_filter(
             filtered_codes.append(code)
 
     if config.market_review_enabled and not getattr(args, 'no_market_review', False):
-        effective_region = compute_effective_region(
-            getattr(config, 'market_review_region', 'cn') or 'cn', open_markets
-        )
+        if market_review_region_override is not None:
+            if market_review_region_override == '':
+                effective_region = ''
+            else:
+                effective_region = compute_effective_region(
+                    market_review_region_override, open_markets
+                )
+        else:
+            effective_region = compute_effective_region(
+                getattr(config, 'market_review_region', 'cn') or 'cn', open_markets
+            )
     else:
         effective_region = None
 
@@ -720,6 +754,7 @@ def run_full_analysis(
     args: argparse.Namespace,
     stock_codes: Optional[List[str]] = None,
     *,
+    markets: Optional[Sequence[str]] = None,
     raise_errors: bool = False,
 ) -> bool:
     """
@@ -761,8 +796,30 @@ def run_full_analysis(
 
         # Issue #373: Trading day filter (per-stock, per-market)
         effective_codes = stock_codes if stock_codes is not None else config.stock_list
+        slot_markets = None
+        if markets:
+            slot_markets = [str(item).strip().lower() for item in markets if str(item).strip()]
+        if slot_markets:
+            before_count = len(effective_codes)
+            effective_codes = _filter_stocks_by_markets(effective_codes, slot_markets)
+            logger.info(
+                "按定时槽位市场过滤股票: markets=%s kept=%d/%d",
+                ",".join(slot_markets),
+                len(effective_codes),
+                before_count,
+            )
+        from src.scheduler import markets_to_review_region
+        review_region_override = markets_to_review_region(slot_markets)
+        if slot_markets is not None and review_region_override == '':
+            logger.info(
+                "本轮槽位市场 %s 不在大盘复盘支持集内，跳过本轮大盘复盘",
+                ",".join(slot_markets),
+            )
         filtered_codes, effective_region, should_skip = _compute_trading_day_filter(
-            config, args, effective_codes
+            config,
+            args,
+            effective_codes,
+            market_review_region_override=review_region_override,
         )
         if should_skip:
             if portfolio_is_empty:
@@ -1079,9 +1136,12 @@ def run_scheduled_analysis(
     config: Config,
     args: argparse.Namespace,
     stock_codes: Optional[List[str]] = None,
+    markets: Optional[Sequence[str]] = None,
 ) -> bool:
     """Run scheduled analysis with failures propagated to the scheduler."""
-    return run_full_analysis(config, args, stock_codes, raise_errors=True)
+    return run_full_analysis(
+        config, args, stock_codes, markets=markets, raise_errors=True
+    )
 
 
 def _run_analysis_with_runtime_scheduler_lock(
@@ -1304,6 +1364,39 @@ def _build_schedule_times_provider(default_schedule_time: str):
         schedule_time = (config_map.get("SCHEDULE_TIME", "") or "").strip() or _SYSTEM_DEFAULT_SCHEDULE_TIME
         return normalize_schedule_times(
             config_map.get("SCHEDULE_TIMES", ""),
+            fallback_time=schedule_time,
+        )
+
+    return _provider
+
+
+def _build_schedule_slots_provider(default_schedule_time: str):
+    """Read the latest SCHEDULE_SLOTS with SCHEDULE_TIMES / SCHEDULE_TIME fallback."""
+    from src.core.config_manager import ConfigManager
+    from src.scheduler import normalize_schedule_slots
+
+    _SYSTEM_DEFAULT_SCHEDULE_TIME = "18:00"
+    manager = ConfigManager()
+
+    def _provider():
+        if "SCHEDULE_SLOTS" in _INITIAL_PROCESS_ENV:
+            return normalize_schedule_slots(
+                os.getenv("SCHEDULE_SLOTS", ""),
+                schedule_times=os.getenv("SCHEDULE_TIMES", ""),
+                fallback_time=os.getenv("SCHEDULE_TIME", default_schedule_time),
+            )
+        if "SCHEDULE_TIMES" in _INITIAL_PROCESS_ENV or "SCHEDULE_TIME" in _INITIAL_PROCESS_ENV:
+            return normalize_schedule_slots(
+                os.getenv("SCHEDULE_SLOTS", ""),
+                schedule_times=os.getenv("SCHEDULE_TIMES", ""),
+                fallback_time=os.getenv("SCHEDULE_TIME", default_schedule_time),
+            )
+
+        config_map = manager.read_config_map()
+        schedule_time = (config_map.get("SCHEDULE_TIME", "") or "").strip() or _SYSTEM_DEFAULT_SCHEDULE_TIME
+        return normalize_schedule_slots(
+            config_map.get("SCHEDULE_SLOTS", ""),
+            schedule_times=config_map.get("SCHEDULE_TIMES", ""),
             fallback_time=schedule_time,
         )
 
@@ -1551,10 +1644,13 @@ def main() -> int:
             scheduled_stock_codes = _resolve_scheduled_stock_codes(stock_codes)
             schedule_time_provider = _build_schedule_time_provider(config.schedule_time)
             schedule_times_provider = _build_schedule_times_provider(config.schedule_time)
+            schedule_slots_provider = _build_schedule_slots_provider(config.schedule_time)
 
-            def scheduled_task():
+            def scheduled_task(markets=None):
                 runtime_config = _reload_runtime_config()
-                run_full_analysis(runtime_config, args, scheduled_stock_codes)
+                run_full_analysis(
+                    runtime_config, args, scheduled_stock_codes, markets=markets
+                )
 
             background_tasks = []
             if getattr(config, 'agent_event_monitor_enabled', False):
@@ -1582,6 +1678,8 @@ def main() -> int:
                 "run_immediately": should_run_immediately,
                 "background_tasks": background_tasks,
                 "schedule_time_provider": schedule_time_provider,
+                "schedule_slots": getattr(config, "schedule_slots", None),
+                "schedule_slots_provider": schedule_slots_provider,
             }
             if hasattr(config, "schedule_times"):
                 schedule_kwargs["schedule_times"] = config.schedule_times

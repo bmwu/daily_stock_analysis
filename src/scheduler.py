@@ -18,10 +18,27 @@ import re
 import signal
 import threading
 import time
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional, Sequence, Union
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 logger = logging.getLogger(__name__)
+
+SCHEDULE_TIME_PATTERN = re.compile(r"(?:[01]\d|2[0-3]):[0-5]\d")
+SCHEDULE_STOCK_MARKETS: Tuple[str, ...] = ("cn", "hk", "us", "jp", "kr", "tw")
+SCHEDULE_STOCK_MARKET_SET = frozenset(SCHEDULE_STOCK_MARKETS)
+
+
+@dataclass(frozen=True)
+class ScheduleSlot:
+    """One daily schedule trigger with optional market filter."""
+
+    time: str
+    markets: Tuple[str, ...] = ()
+
+    @property
+    def has_market_filter(self) -> bool:
+        return bool(self.markets)
 
 
 def normalize_schedule_times(
@@ -40,12 +57,141 @@ def normalize_schedule_times(
     valid = {
         item
         for item in raw_items
-        if item and re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", item)
+        if item and SCHEDULE_TIME_PATTERN.fullmatch(item)
     }
     if not valid:
         fallback = (fallback_time or "18:00").strip() or "18:00"
-        valid.add(fallback if re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", fallback) else "18:00")
+        valid.add(fallback if SCHEDULE_TIME_PATTERN.fullmatch(fallback) else "18:00")
     return sorted(valid)
+
+
+def normalize_schedule_markets(
+    markets: Optional[Union[Sequence[str], str]],
+) -> Tuple[str, ...]:
+    """Return ordered unique stock-analysis markets; empty means no filter."""
+    if markets is None:
+        return ()
+    if isinstance(markets, str):
+        raw_items = [item.strip().lower() for item in markets.split(",")]
+    else:
+        raw_items = [str(item).strip().lower() for item in markets]
+
+    selected = {item for item in raw_items if item in SCHEDULE_STOCK_MARKET_SET}
+    return tuple(market for market in SCHEDULE_STOCK_MARKETS if market in selected)
+
+
+def serialize_schedule_slots(slots: Sequence[ScheduleSlot]) -> str:
+    """Serialize schedule slots to SCHEDULE_SLOTS env form."""
+    parts: List[str] = []
+    for slot in slots:
+        markets = ",".join(slot.markets) if slot.markets else ",".join(SCHEDULE_STOCK_MARKETS)
+        parts.append(f"{slot.time}|{markets}")
+    return ";".join(parts)
+
+
+def _slot_from_mapping(item: Mapping[str, Any]) -> Optional[ScheduleSlot]:
+    time_value = str(item.get("time", "") or "").strip()
+    if not SCHEDULE_TIME_PATTERN.fullmatch(time_value):
+        return None
+    markets = normalize_schedule_markets(item.get("markets"))
+    return ScheduleSlot(time=time_value, markets=markets)
+
+
+def _parse_schedule_slots_raw(raw: str) -> List[ScheduleSlot]:
+    """Parse ``HH:MM|market[,market...];...`` into slots (invalid tokens skipped)."""
+    slots: List[ScheduleSlot] = []
+    seen_times = set()
+    for part in raw.split(";"):
+        token = part.strip()
+        if not token:
+            continue
+        if "|" in token:
+            time_raw, markets_raw = token.split("|", 1)
+        else:
+            time_raw, markets_raw = token, ""
+        time_value = time_raw.strip()
+        if not SCHEDULE_TIME_PATTERN.fullmatch(time_value):
+            logger.warning("Ignoring invalid SCHEDULE_SLOTS time token: %r", token)
+            continue
+        if time_value in seen_times:
+            logger.warning("Ignoring duplicate SCHEDULE_SLOTS time: %s", time_value)
+            continue
+        markets = normalize_schedule_markets(markets_raw)
+        # Bare time or empty market list => no market filter (all markets).
+        if markets_raw.strip() and not markets:
+            logger.warning("Ignoring SCHEDULE_SLOTS entry with no valid markets: %r", token)
+            continue
+        seen_times.add(time_value)
+        slots.append(ScheduleSlot(time=time_value, markets=markets))
+    return slots
+
+
+def normalize_schedule_slots(
+    schedule_slots: Optional[
+        Union[str, Sequence[ScheduleSlot], Sequence[Mapping[str, Any]], Sequence[str]]
+    ] = None,
+    *,
+    schedule_times: Optional[Union[Sequence[str], str]] = None,
+    fallback_time: str = "18:00",
+) -> List[ScheduleSlot]:
+    """Normalize schedule slots; empty slots fall back to time-only legacy behavior.
+
+    ``SCHEDULE_SLOTS`` non-empty values win. Otherwise times from
+    ``SCHEDULE_TIMES`` / ``SCHEDULE_TIME`` are used with an empty market filter
+    (analyze all markets, subject to trading-day checks).
+    """
+    parsed: List[ScheduleSlot] = []
+    if isinstance(schedule_slots, str):
+        raw = schedule_slots.strip()
+        if raw:
+            parsed = _parse_schedule_slots_raw(raw)
+    elif schedule_slots:
+        seen_times = set()
+        for item in schedule_slots:
+            slot: Optional[ScheduleSlot] = None
+            if isinstance(item, ScheduleSlot):
+                slot = item if SCHEDULE_TIME_PATTERN.fullmatch(item.time) else None
+                if slot is not None:
+                    slot = ScheduleSlot(
+                        time=slot.time,
+                        markets=normalize_schedule_markets(slot.markets),
+                    )
+            elif isinstance(item, Mapping):
+                slot = _slot_from_mapping(item)
+            elif isinstance(item, str) and "|" in item:
+                parsed_one = _parse_schedule_slots_raw(item)
+                slot = parsed_one[0] if parsed_one else None
+            elif isinstance(item, str) and SCHEDULE_TIME_PATTERN.fullmatch(item.strip()):
+                slot = ScheduleSlot(time=item.strip(), markets=())
+            if slot is None:
+                continue
+            if slot.time in seen_times:
+                continue
+            seen_times.add(slot.time)
+            parsed.append(slot)
+
+    if parsed:
+        return sorted(parsed, key=lambda slot: slot.time)
+
+    times = normalize_schedule_times(schedule_times, fallback_time=fallback_time)
+    return [ScheduleSlot(time=time_value, markets=()) for time_value in times]
+
+
+def markets_to_review_region(markets: Optional[Sequence[str]]) -> Optional[str]:
+    """Map stock-analysis markets to a market-review region string.
+
+    Returns:
+        None when ``markets`` is None (caller keeps config default)
+        '' when markets were provided but none support market review
+        comma-joined region otherwise
+    """
+    if markets is None:
+        return None
+    from src.utils.market_review_region import MARKET_REVIEW_REGION_ORDER
+
+    selected = {str(item).strip().lower() for item in markets if str(item).strip()}
+    regions = [region for region in MARKET_REVIEW_REGION_ORDER if region in selected]
+    return ",".join(regions)
 
 
 class GracefulShutdown:
@@ -95,6 +241,10 @@ class Scheduler:
         schedule_time_provider: Optional[Callable[[], str]] = None,
         schedule_times: Optional[Sequence[str]] = None,
         schedule_times_provider: Optional[Callable[[], Union[Sequence[str], str]]] = None,
+        schedule_slots: Optional[Sequence[ScheduleSlot]] = None,
+        schedule_slots_provider: Optional[
+            Callable[[], Union[Sequence[ScheduleSlot], str]]
+        ] = None,
         register_signals: bool = True,
     ):
         """
@@ -111,13 +261,32 @@ class Scheduler:
             raise ImportError("请安装 schedule 库: pip install schedule")
 
         self.schedule_time = schedule_time
-        self.schedule_times = (
-            normalize_schedule_times(schedule_times, fallback_time=schedule_time)
-            if schedule_times is not None
-            else [(schedule_time or "").strip()]
-        )
         self._schedule_time_provider = schedule_time_provider
         self._schedule_times_provider = schedule_times_provider
+        self._schedule_slots_provider = schedule_slots_provider
+        if schedule_slots is not None:
+            self.schedule_slots = normalize_schedule_slots(
+                schedule_slots,
+                schedule_times=schedule_times,
+                fallback_time=schedule_time,
+            )
+            self.schedule_times = [slot.time for slot in self.schedule_slots]
+        elif schedule_times is not None:
+            self.schedule_slots = normalize_schedule_slots(
+                None,
+                schedule_times=schedule_times,
+                fallback_time=schedule_time,
+            )
+            self.schedule_times = [slot.time for slot in self.schedule_slots]
+        else:
+            # Preserve legacy sole-time semantics: keep the raw value so
+            # set_daily_task can reject an invalid initial SCHEDULE_TIME.
+            raw_time = (schedule_time or "").strip()
+            self.schedule_times = [raw_time]
+            if Scheduler._is_valid_schedule_time(raw_time):
+                self.schedule_slots = [ScheduleSlot(time=raw_time, markets=())]
+            else:
+                self.schedule_slots = []
         self.shutdown_handler = GracefulShutdown(register_signals=register_signals)
         self._task_callback: Optional[Callable] = None
         self._daily_job: Optional[Any] = None
@@ -130,11 +299,21 @@ class Scheduler:
         设置每日定时任务
 
         Args:
-            task: 要执行的任务函数（无参数）
+            task: 任务回调；可接受可选关键字参数 ``markets``
             run_immediately: 是否在设置后立即执行一次
         """
         self._task_callback = task
-        if not self._configure_daily_tasks(self.schedule_times):
+        slots = self.schedule_slots or normalize_schedule_slots(
+            None,
+            schedule_times=self.schedule_times,
+            fallback_time=self.schedule_time,
+        )
+        # Reject invalid sole SCHEDULE_TIME before applying fallback semantics.
+        if not self.schedule_slots and not any(
+            self._is_valid_schedule_time(item) for item in self.schedule_times
+        ):
+            raise ValueError(f"无效的定时执行时间: {self.schedule_time!r}")
+        if not self._configure_daily_slots(slots):
             raise ValueError(f"无效的定时执行时间: {self.schedule_time!r}")
 
         if run_immediately:
@@ -145,9 +324,7 @@ class Scheduler:
     def _is_valid_schedule_time(schedule_time: str) -> bool:
         """Validate time string in HH:MM 24-hour format."""
         candidate = (schedule_time or "").strip()
-        if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", candidate):
-            return False
-        return True
+        return bool(SCHEDULE_TIME_PATTERN.fullmatch(candidate))
 
     def _cancel_daily_job(self) -> None:
         """Remove the currently registered daily job if one exists."""
@@ -168,7 +345,7 @@ class Scheduler:
         self._daily_jobs = []
 
     def _configure_daily_task(self, schedule_time: str) -> bool:
-        """(Re)register the daily job at the requested time."""
+        """(Re)register a single daily job time (legacy API)."""
         candidate = (schedule_time or "").strip()
         if not self._is_valid_schedule_time(candidate):
             logger.warning(
@@ -177,108 +354,112 @@ class Scheduler:
                 self.schedule_time,
             )
             return False
-
-        previous_time = self.schedule_time
-        self._cancel_daily_job()
-        self._daily_job = self.schedule.every().day.at(candidate).do(self._safe_run_task)
-        self.schedule_time = candidate
-
-        if previous_time == candidate:
-            logger.info("已设置每日定时任务，执行时间: %s", self.schedule_time)
-        else:
-            logger.info(
-                "检测到 SCHEDULE_TIME 变更，已将每日定时任务从 %s 更新为 %s",
-                previous_time,
-                self.schedule_time,
+        return self._configure_daily_slots(
+            normalize_schedule_slots(
+                None,
+                schedule_times=[candidate],
+                fallback_time=self.schedule_time,
             )
-        return True
-
-    def _refresh_daily_schedule_if_needed(self) -> None:
-        """Reload daily schedule time from the latest runtime config if needed."""
-        if self._task_callback is None or self._schedule_time_provider is None:
-            return
-
-        try:
-            latest_schedule_time = (self._schedule_time_provider() or "").strip()
-        except Exception as exc:  # pragma: no cover - defensive branch
-            logger.warning("读取最新 SCHEDULE_TIME 失败，继续沿用 %s: %s", self.schedule_time, exc)
-            return
-
-        if not latest_schedule_time or latest_schedule_time == self.schedule_time:
-            return
-
-        if self._configure_daily_task(latest_schedule_time):
-            logger.info("更新后的下次执行时间: %s", self._get_next_run_time())
+        )
 
     def _configure_daily_tasks(self, schedule_times: Union[Sequence[str], str]) -> bool:
-        """(Re)register daily jobs at the requested times."""
-        raw_items = (
-            [item.strip() for item in schedule_times.split(",")]
-            if isinstance(schedule_times, str)
-            else [str(item).strip() for item in schedule_times]
+        """(Re)register daily jobs at the requested times (legacy time-only API)."""
+        return self._configure_daily_slots(
+            normalize_schedule_slots(
+                None,
+                schedule_times=schedule_times,
+                fallback_time=self.schedule_time,
+            )
         )
-        invalid_items = [item for item in raw_items if item and not self._is_valid_schedule_time(item)]
-        if invalid_items:
+
+    def _slot_runner(self, markets: Optional[Sequence[str]]):
+        """Build a zero-arg callback that executes the daily task for one slot."""
+
+        def _runner() -> None:
+            self._safe_run_task(markets=markets)
+
+        return _runner
+
+    def _configure_daily_slots(self, schedule_slots: Sequence[ScheduleSlot]) -> bool:
+        """(Re)register daily jobs for schedule slots (time + optional markets)."""
+        candidates = normalize_schedule_slots(
+            schedule_slots,
+            fallback_time=self.schedule_time,
+        )
+        if not candidates:
             logger.warning(
-                "Invalid schedule time values %r; keeping current times %s",
-                invalid_items,
-                ",".join(self.schedule_times),
+                "Invalid schedule slots; keeping current slots %s",
+                serialize_schedule_slots(self.schedule_slots),
             )
             return False
 
-        candidates = normalize_schedule_times(raw_items, fallback_time=self.schedule_time)
-        previous_times = list(self.schedule_times)
+        previous_slots = list(self.schedule_slots)
         self._cancel_daily_job()
-        self._daily_jobs = [
-            self.schedule.every().day.at(candidate).do(self._safe_run_task)
-            for candidate in candidates
-        ]
+        self._daily_jobs = []
+        for slot in candidates:
+            markets = list(slot.markets) if slot.markets else None
+            job = self.schedule.every().day.at(slot.time).do(self._slot_runner(markets))
+            self._daily_jobs.append(job)
         self._daily_job = self._daily_jobs[0] if self._daily_jobs else None
-        self.schedule_times = candidates
-        self.schedule_time = candidates[0] if candidates else "18:00"
+        self.schedule_slots = candidates
+        self.schedule_times = [slot.time for slot in candidates]
+        self.schedule_time = candidates[0].time if candidates else "18:00"
 
-        if previous_times == candidates:
-            logger.info("Daily scheduled jobs configured at: %s", ",".join(self.schedule_times))
+        rendered = serialize_schedule_slots(candidates)
+        if previous_slots == candidates:
+            logger.info("Daily scheduled jobs configured: %s", rendered)
         else:
             logger.info(
-                "Schedule times changed from %s to %s",
-                ",".join(previous_times),
-                ",".join(self.schedule_times),
+                "Schedule slots changed from %s to %s",
+                serialize_schedule_slots(previous_slots),
+                rendered,
             )
         return True
 
     def _refresh_daily_schedule_if_needed(self) -> None:
-        """Reload daily schedule times from the latest runtime config if needed."""
+        """Reload daily schedule slots from the latest runtime config if needed."""
         if self._task_callback is None:
             return
 
         try:
-            if self._schedule_times_provider is not None:
-                latest_schedule_times = self._schedule_times_provider()
+            if self._schedule_slots_provider is not None:
+                latest_slots = normalize_schedule_slots(
+                    self._schedule_slots_provider(),
+                    fallback_time=self.schedule_time,
+                )
+            elif self._schedule_times_provider is not None:
+                latest_slots = normalize_schedule_slots(
+                    None,
+                    schedule_times=self._schedule_times_provider(),
+                    fallback_time=self.schedule_time,
+                )
             elif self._schedule_time_provider is not None:
-                latest_schedule_times = [(self._schedule_time_provider() or "").strip()]
+                latest_slots = normalize_schedule_slots(
+                    None,
+                    schedule_times=[(self._schedule_time_provider() or "").strip()],
+                    fallback_time=self.schedule_time,
+                )
             else:
                 return
         except Exception as exc:  # pragma: no cover - defensive branch
             logger.warning(
-                "Failed to read latest schedule times; keeping %s: %s",
-                ",".join(self.schedule_times),
+                "Failed to read latest schedule slots; keeping %s: %s",
+                serialize_schedule_slots(self.schedule_slots),
                 exc,
             )
             return
 
-        latest = normalize_schedule_times(latest_schedule_times, fallback_time=self.schedule_time)
-        if latest == self.schedule_times:
+        if latest_slots == self.schedule_slots:
             return
 
-        if self._configure_daily_tasks(latest):
+        if self._configure_daily_slots(latest_slots):
             logger.info("Schedule refreshed; next run: %s", self._get_next_run_time())
 
     def refresh_daily_schedule_if_needed(self) -> None:
         """Public wrapper for runtime scheduler reconciliation."""
         self._refresh_daily_schedule_if_needed()
 
-    def _safe_run_task(self):
+    def _safe_run_task(self, markets: Optional[Sequence[str]] = None):
         """安全执行任务（带异常捕获）"""
         if self._task_callback is None:
             return
@@ -286,9 +467,14 @@ class Scheduler:
         try:
             logger.info("=" * 50)
             logger.info(f"定时任务开始执行 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            if markets:
+                logger.info("本轮限定市场: %s", ",".join(markets))
             logger.info("=" * 50)
 
-            self._task_callback()
+            try:
+                self._task_callback(markets=list(markets) if markets else None)
+            except TypeError:
+                self._task_callback()
 
             logger.info(f"定时任务执行完成 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
@@ -422,6 +608,10 @@ def run_with_schedule(
     schedule_time_provider: Optional[Callable[[], str]] = None,
     schedule_times: Optional[Sequence[str]] = None,
     schedule_times_provider: Optional[Callable[[], Union[Sequence[str], str]]] = None,
+    schedule_slots: Optional[Sequence[ScheduleSlot]] = None,
+    schedule_slots_provider: Optional[
+        Callable[[], Union[Sequence[ScheduleSlot], str]]
+    ] = None,
 ):
     """
     便捷函数：使用定时调度运行任务
@@ -435,11 +625,17 @@ def run_with_schedule(
             和 `run_immediately`。`interval_seconds` 单位为秒。
         schedule_time_provider: 可选的时间提供器；调度器每轮检查前会读取，
             当返回值变化时自动重建 daily job。
+        schedule_slots: 可选的时间+市场槽位列表；优先于纯时间列表。
+        schedule_slots_provider: 可选的槽位提供器，用于热重载。
     """
     scheduler_kwargs: Dict[str, Any] = {
         "schedule_time": schedule_time,
         "schedule_time_provider": schedule_time_provider,
     }
+    if schedule_slots is not None:
+        scheduler_kwargs["schedule_slots"] = schedule_slots
+    if schedule_slots_provider is not None:
+        scheduler_kwargs["schedule_slots_provider"] = schedule_slots_provider
     if schedule_times is not None:
         scheduler_kwargs["schedule_times"] = schedule_times
     if schedule_times_provider is not None:
