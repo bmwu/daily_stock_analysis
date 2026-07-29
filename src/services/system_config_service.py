@@ -2090,6 +2090,7 @@ class SystemConfigService:
             "SCHEDULE_ENABLED",
             "SCHEDULE_TIME",
             "SCHEDULE_TIMES",
+            "SCHEDULE_SLOTS",
         }:
             try:
                 self._runtime_scheduler.reconcile_from_config(
@@ -2208,6 +2209,24 @@ class SystemConfigService:
                     "如果当前进程存在 runtime scheduler，会按新时间重建 daily jobs。"
                 )
             )
+
+        if "SCHEDULE_SLOTS" in submitted_keys:
+            schedule_slots = (current_map.get("SCHEDULE_SLOTS", "") or "").strip()
+            if schedule_slots:
+                warnings.append(
+                    (
+                        f"SCHEDULE_SLOTS={schedule_slots} 已写入 .env。"
+                        "定时任务将按槽位时间触发，并仅分析/复盘选定市场；"
+                        "建议同步维护 SCHEDULE_TIMES 纯时间列表以便兼容展示。"
+                    )
+                )
+            else:
+                warnings.append(
+                    (
+                        "SCHEDULE_SLOTS 已清空，定时任务回退到 SCHEDULE_TIMES / SCHEDULE_TIME，"
+                        "不再按市场过滤。"
+                    )
+                )
 
         if "SCHEDULE_TIME" in submitted_keys:
             schedule_time = (current_map.get("SCHEDULE_TIME", "") or "").strip() or "18:00"

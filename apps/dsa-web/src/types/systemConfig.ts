@@ -217,10 +217,16 @@ export interface ValidateSystemConfigResponse {
   issues: ConfigValidationIssue[];
 }
 
+export interface SchedulerStatusSlot {
+  time: string;
+  markets: string[];
+}
+
 export interface SchedulerStatusResponse {
   enabled: boolean;
   running: boolean;
   scheduleTimes: string[];
+  scheduleSlots?: SchedulerStatusSlot[];
   nextRunAt?: string | null;
   lastRunAt?: string | null;
   lastSuccessAt?: string | null;

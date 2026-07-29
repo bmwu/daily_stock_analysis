@@ -12,7 +12,11 @@ from types import SimpleNamespace
 from typing import Any, Callable, Dict, List, Optional, Set
 
 from src.config import Config, get_config
-from src.scheduler import Scheduler, normalize_schedule_times
+from src.scheduler import (
+    Scheduler,
+    normalize_schedule_slots,
+    normalize_schedule_times,
+)
 
 logger = logging.getLogger(__name__)
 CLI_SCHEDULER_OWNER_ENV = "DSA_CLI_SCHEDULER_OWNS_SCHEDULE"
@@ -172,7 +176,11 @@ class RuntimeSchedulerService:
         self._last_skip_reason = "analysis_already_running"
         logger.warning("Runtime scheduler skipped run: analysis already running")
 
-    def _run_analysis_locked(self, stock_codes: Optional[List[str]]) -> None:
+    def _run_analysis_locked(
+        self,
+        stock_codes: Optional[List[str]],
+        markets: Optional[List[str]] = None,
+    ) -> None:
         try:
             config = self._reload_config()
             runner = self._task_runner
@@ -181,7 +189,10 @@ class RuntimeSchedulerService:
 
                 runner = run_scheduled_analysis
             self._last_run_at = datetime.now().isoformat()
-            result = runner(config, self._make_schedule_args(), stock_codes)
+            try:
+                result = runner(config, self._make_schedule_args(), stock_codes, markets=markets)
+            except TypeError:
+                result = runner(config, self._make_schedule_args(), stock_codes)
             if result is False:
                 raise RuntimeError("runtime scheduled analysis reported failure")
             self._last_success_at = datetime.now().isoformat()
@@ -190,20 +201,28 @@ class RuntimeSchedulerService:
             self._last_error = str(exc)
             logger.exception("Runtime scheduled analysis failed: %s", exc)
 
-    def _run_analysis_once(self, stock_codes: Optional[List[str]] = None) -> bool:
+    def _run_analysis_once(
+        self,
+        stock_codes: Optional[List[str]] = None,
+        markets: Optional[List[str]] = None,
+    ) -> bool:
         if not self._run_lock.acquire(blocking=False):
             self._record_analysis_busy_skip()
             return False
         try:
-            self._run_analysis_locked(stock_codes)
+            self._run_analysis_locked(stock_codes, markets=markets)
         finally:
             self._run_lock.release()
         return True
 
     def _current_times(self) -> List[str]:
+        return [slot.time for slot in self._current_slots()]
+
+    def _current_slots(self):
         config = self._config_provider()
-        return normalize_schedule_times(
-            getattr(config, "schedule_times", None),
+        return normalize_schedule_slots(
+            getattr(config, "schedule_slots", None),
+            schedule_times=getattr(config, "schedule_times", None),
             fallback_time=getattr(config, "schedule_time", "18:00"),
         )
 
@@ -274,13 +293,15 @@ class RuntimeSchedulerService:
                 return
             background_tasks = self._current_background_tasks(config)
             self.stop()
-            times = normalize_schedule_times(
-                getattr(config, "schedule_times", None),
+            slots = normalize_schedule_slots(
+                getattr(config, "schedule_slots", None),
+                schedule_times=getattr(config, "schedule_times", None),
                 fallback_time=getattr(config, "schedule_time", "18:00"),
             )
             scheduler = Scheduler(
                 schedule_time=getattr(config, "schedule_time", "18:00"),
-                schedule_times=times,
+                schedule_slots=slots,
+                schedule_slots_provider=self._current_slots,
                 schedule_times_provider=self._current_times,
                 register_signals=False,
             )
@@ -367,16 +388,27 @@ class RuntimeSchedulerService:
             next_run = min(job.next_run for job in jobs).isoformat()
         if scheduler is not None:
             schedule_times = list(getattr(scheduler, "schedule_times", []))
+            schedule_slots = [
+                {"time": slot.time, "markets": list(slot.markets)}
+                for slot in getattr(scheduler, "schedule_slots", [])
+            ]
         else:
             try:
-                schedule_times = self._current_times()
+                slots = self._current_slots()
+                schedule_times = [slot.time for slot in slots]
+                schedule_slots = [
+                    {"time": slot.time, "markets": list(slot.markets)}
+                    for slot in slots
+                ]
             except Exception:  # pragma: no cover - defensive status fallback
                 schedule_times = []
+                schedule_slots = []
         running = self._run_lock.locked()
         return {
             "enabled": self._enabled,
             "running": running,
             "schedule_times": schedule_times,
+            "schedule_slots": schedule_slots,
             "next_run_at": next_run,
             "last_run_at": self._last_run_at,
             "last_success_at": self._last_success_at,

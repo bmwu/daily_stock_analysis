@@ -680,17 +680,19 @@ const settingsHelpZhCN: SettingsHelpMap = {
   },
   'settings.system.schedule': {
     title: '定时任务',
-    summary: '控制是否启用每日定时分析以及启动时是否立即执行一次。',
-    usage: 'SCHEDULE_TIME 使用 HH:MM 24 小时格式；SCHEDULE_TIMES 可配置逗号分隔的多个 HH:MM 时间点；SCHEDULE_ENABLED 控制 runtime scheduler 是否启用。',
+    summary: '控制是否启用每日定时分析、各时间点对应市场，以及启动时是否立即执行一次。',
+    usage: 'SCHEDULE_TIME 使用 HH:MM；SCHEDULE_TIMES 可配置逗号分隔多个时间；SCHEDULE_SLOTS 使用 `HH:MM|market[,market...]`（分号分隔多槽），非空时优先生效；SCHEDULE_ENABLED 控制 runtime scheduler。',
     valueNotes: [
-      '已运行的 schedule 模式会在下一轮调度检查中读取新的 SCHEDULE_TIME / SCHEDULE_TIMES 并重建 daily jobs。',
-      'WebUI/API/Desktop 长运行进程保存 SCHEDULE_ENABLED、SCHEDULE_TIME 或 SCHEDULE_TIMES 后会按新配置启停或重建 runtime scheduler。',
-      '定时任务触发时会读取当前保存的 STOCK_LIST。',
+      'Web 设置页以“时间 + 市场多选”行维护 SCHEDULE_SLOTS，并同步纯时间到 SCHEDULE_TIMES。',
+      '已运行的 schedule 模式会在下一轮调度检查中读取新的 SCHEDULE_SLOTS / SCHEDULE_TIME(S) 并重建 daily jobs。',
+      'WebUI/API/Desktop 长运行进程保存 SCHEDULE_ENABLED、SCHEDULE_SLOTS、SCHEDULE_TIME 或 SCHEDULE_TIMES 后会按新配置启停或重建 runtime scheduler。',
+      '定时任务触发时会读取当前保存的 STOCK_LIST，并只分析该槽位选定市场的个股；大盘复盘也跟随该槽位市场。',
     ],
-    impact: ['影响 schedule 模式下自动分析频率、启动行为和通知推送时间。'],
+    impact: ['影响 schedule 模式下自动分析频率、市场范围、启动行为和通知推送时间。'],
     notes: [
       '注意运行环境时区，容器和服务器时区可能与本地不同。',
       'SCHEDULE_RUN_IMMEDIATELY 仍是启动期行为；保存后不会立即触发一次分析。',
+      '“立即执行一次”仍跑全量 STOCK_LIST + 全局 MARKET_REVIEW_REGION，不绑定某一槽位。',
     ],
   },
   'settings.system.RUN_IMMEDIATELY': {
@@ -1867,17 +1869,19 @@ const settingsHelpEnUS: SettingsHelpMap = {
   },
   'settings.system.schedule': {
     title: 'Schedule',
-    summary: 'Controls daily scheduled analysis and whether startup runs immediately.',
-    usage: 'SCHEDULE_TIME uses HH:MM 24-hour format. SCHEDULE_TIMES accepts comma-separated HH:MM values. SCHEDULE_ENABLED controls whether the runtime scheduler is enabled.',
+    summary: 'Controls daily scheduled analysis, per-slot markets, and whether startup runs immediately.',
+    usage: 'SCHEDULE_TIME uses HH:MM. SCHEDULE_TIMES accepts comma-separated times. SCHEDULE_SLOTS uses `HH:MM|market[,market...]` separated by semicolons and wins when non-empty. SCHEDULE_ENABLED controls the runtime scheduler.',
     valueNotes: [
-      'An already-running schedule mode reads new SCHEDULE_TIME / SCHEDULE_TIMES values on the next scheduler check and rebuilds the daily jobs.',
-      'Long-running WebUI/API/Desktop processes start, stop, or rebuild the runtime scheduler after saving SCHEDULE_ENABLED, SCHEDULE_TIME, or SCHEDULE_TIMES.',
-      'Scheduled runs read the currently saved STOCK_LIST.',
+      'The Web settings card maintains SCHEDULE_SLOTS as time + market multi-select rows and syncs plain times to SCHEDULE_TIMES.',
+      'An already-running schedule mode reads new SCHEDULE_SLOTS / SCHEDULE_TIME(S) on the next scheduler check and rebuilds daily jobs.',
+      'Long-running WebUI/API/Desktop processes start, stop, or rebuild the runtime scheduler after saving SCHEDULE_ENABLED, SCHEDULE_SLOTS, SCHEDULE_TIME, or SCHEDULE_TIMES.',
+      'Scheduled runs read STOCK_LIST and only analyze stocks in the slot markets; market review follows the same slot markets.',
     ],
-    impact: ['Affects automatic analysis frequency, startup behavior, and notification timing in schedule mode.'],
+    impact: ['Affects automatic analysis frequency, market scope, startup behavior, and notification timing in schedule mode.'],
     notes: [
       'Check the runtime timezone, especially in containers and servers.',
       'SCHEDULE_RUN_IMMEDIATELY remains a startup-time setting; saving it does not trigger an immediate analysis run.',
+      'Run now still uses the full STOCK_LIST plus global MARKET_REVIEW_REGION and is not bound to a slot.',
     ],
   },
   'settings.system.RUN_IMMEDIATELY': {

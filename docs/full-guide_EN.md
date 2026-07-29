@@ -404,6 +404,7 @@ For the notification baseline, diagnostics, and deployment notes, see [Notificat
 | `SCHEDULE_ENABLED` | Enable scheduled tasks | `false` |
 | `SCHEDULE_TIME` | Scheduled execution time | `18:00` |
 | `SCHEDULE_TIMES` | Multiple scheduled execution times, comma-separated; falls back to `SCHEDULE_TIME` when empty | empty |
+| `SCHEDULE_SLOTS` | Market-scoped schedule slots (`HH:MM\|market[,market...]`, semicolon-separated); when set, overrides `SCHEDULE_TIMES` and filters stocks/market review by slot markets | empty |
 | `SCHEDULE_RUN_IMMEDIATELY` | Run once immediately when scheduler mode starts; when unset it keeps following the legacy `RUN_IMMEDIATELY` runtime override | `true` |
 | `RUN_IMMEDIATELY` | Run once immediately for non-scheduler startup; also acts as the legacy fallback when `SCHEDULE_RUN_IMMEDIATELY` is unset | `true` |
 | `LOG_DIR` | Log directory | `./logs` |

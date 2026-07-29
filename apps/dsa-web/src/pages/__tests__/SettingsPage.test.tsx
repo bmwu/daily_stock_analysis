@@ -1741,7 +1741,18 @@ describe('SettingsPage', () => {
       target: { value: '10:30' },
     });
 
+    expect(setDraftValue).toHaveBeenCalledWith(
+      'SCHEDULE_SLOTS',
+      '10:30|cn,hk,us,jp,kr,tw;15:10|cn,hk,us,jp,kr,tw',
+    );
     expect(setDraftValue).toHaveBeenCalledWith('SCHEDULE_TIMES', '10:30,15:10');
+
+    fireEvent.click(screen.getByTestId('scheduler-add-time-button'));
+    expect(setDraftValue).toHaveBeenCalledWith(
+      'SCHEDULE_SLOTS',
+      '09:20|cn,hk,us,jp,kr,tw;15:10|cn,hk,us,jp,kr,tw;18:00|cn,hk,us,jp,kr,tw',
+    );
+    expect(setDraftValue).toHaveBeenCalledWith('SCHEDULE_TIMES', '09:20,15:10,18:00');
 
     fireEvent.click(screen.getByTestId('scheduler-run-now-button'));
 

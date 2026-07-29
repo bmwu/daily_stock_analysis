@@ -23,8 +23,19 @@ import {
   SettingsPanelErrorBoundary,
   SettingsSectionCard,
 } from '../components/settings';
+import { ScheduleMarketMultiSelect } from '../components/settings/ScheduleMarketMultiSelect';
 import { WEB_BUILD_INFO } from '../utils/constants';
 import { parseStockListValue } from '../utils/stockList';
+import {
+  nextAvailableScheduleTime,
+  normalizeScheduleMarkets,
+  parseScheduleSlots,
+  serializeScheduleSlots,
+  serializeScheduleTimesFromSlots,
+  SCHEDULE_STOCK_MARKETS,
+  type ScheduleSlotDraft,
+  type ScheduleStockMarket,
+} from '../utils/scheduleSlots';
 import { getCategoryDescription, getCategoryTitle } from '../utils/systemConfigI18n';
 import type {
   ConfigValidationIssue,
@@ -326,6 +337,7 @@ const SCHEDULER_SETTING_KEYS = new Set([
   'SCHEDULE_ENABLED',
   'SCHEDULE_TIME',
   'SCHEDULE_TIMES',
+  'SCHEDULE_SLOTS',
   'SCHEDULE_RUN_IMMEDIATELY',
 ]);
 
@@ -536,22 +548,22 @@ const FirstRunSetupCard: React.FC<FirstRunSetupCardProps> = ({
   );
 };
 
-function parseScheduleTimes(scheduleTimesValue?: string, fallbackValue?: string) {
-  const values = String(scheduleTimesValue ?? '')
-    .split(',')
-    .map((value) => value.trim())
-    .filter(Boolean);
-
-  if (values.length > 0) {
-    return values;
+function formatSlotMarketsLabel(
+  markets: readonly ScheduleStockMarket[],
+  t: (key: UiTextKey, params?: Record<string, string | number>) => string,
+) {
+  if (markets.length === SCHEDULE_STOCK_MARKETS.length) {
+    return t('home.marketRegionAll');
   }
-
-  const fallback = String(fallbackValue ?? '').trim();
-  return fallback ? [fallback] : [SCHEDULER_DEFAULT_TIME];
-}
-
-function serializeScheduleTimes(times: string[]) {
-  return times.map((time) => time.trim()).filter(Boolean).join(',');
+  const labels: Record<ScheduleStockMarket, string> = {
+    cn: t('home.marketRegionCn'),
+    hk: t('home.marketRegionHk'),
+    us: t('home.marketRegionUs'),
+    jp: t('home.marketRegionJp'),
+    kr: t('home.marketRegionKr'),
+    tw: t('home.marketRegionTw'),
+  };
+  return markets.map((market) => labels[market]).join('+') || '-';
 }
 
 function formatSchedulerTimestamp(value: string | null | undefined, language: UiLanguage) {
@@ -600,7 +612,10 @@ const SchedulerSettingsCard: React.FC<SchedulerSettingsCardProps> = ({
   const scheduleEnabledItem = getConfigItem(items, 'SCHEDULE_ENABLED');
   const scheduleTimesItem = getConfigItem(items, 'SCHEDULE_TIMES');
   const scheduleTimeItem = getConfigItem(items, 'SCHEDULE_TIME');
-  const hasSchedulerSettings = Boolean(scheduleEnabledItem || scheduleTimesItem || scheduleTimeItem);
+  const scheduleSlotsItem = getConfigItem(items, 'SCHEDULE_SLOTS');
+  const hasSchedulerSettings = Boolean(
+    scheduleEnabledItem || scheduleTimesItem || scheduleTimeItem || scheduleSlotsItem,
+  );
   const [status, setStatus] = useState<SchedulerStatusResponse | null>(null);
   const [isRefreshingStatus, setIsRefreshingStatus] = useState(false);
   const [isRunningNow, setIsRunningNow] = useState(false);
@@ -646,26 +661,58 @@ const SchedulerSettingsCard: React.FC<SchedulerSettingsCardProps> = ({
   }
 
   const scheduleEnabled = isEnabledConfigValue(scheduleEnabledItem?.value);
-  const scheduleTimes = parseScheduleTimes(
+  const scheduleSlots = parseScheduleSlots(
+    String(scheduleSlotsItem?.value ?? ''),
     String(scheduleTimesItem?.value ?? ''),
-    String(scheduleTimeItem?.value ?? ''),
+    String(scheduleTimeItem?.value ?? '') || SCHEDULER_DEFAULT_TIME,
   );
-  const timeTargetKey = scheduleTimesItem ? 'SCHEDULE_TIMES' : 'SCHEDULE_TIME';
   const statusEnabled = status?.enabled ?? scheduleEnabled;
   const displayedScheduleEnabled = scheduleEnabledOverride ?? statusEnabled;
-  const effectiveStatusTimes = status?.scheduleTimes?.length ? status.scheduleTimes : scheduleTimes.filter(Boolean);
+  const effectiveStatusSlots: ScheduleSlotDraft[] = status?.scheduleSlots?.length
+    ? status.scheduleSlots.map((slot) => ({
+      time: slot.time,
+      markets: slot.markets?.length
+        ? normalizeScheduleMarkets(slot.markets)
+        : [...SCHEDULE_STOCK_MARKETS],
+    }))
+    : scheduleSlots;
+  const effectiveStatusLabels = effectiveStatusSlots.map((slot) => (
+    `${slot.time} (${formatSlotMarketsLabel(slot.markets, t)})`
+  ));
   const validationIssues = [
     ...(issueByKey.SCHEDULE_ENABLED || []),
     ...(issueByKey.SCHEDULE_TIMES || []),
     ...(issueByKey.SCHEDULE_TIME || []),
+    ...(issueByKey.SCHEDULE_SLOTS || []),
   ];
 
-  const updateScheduleTimes = (nextTimes: string[]) => {
-    if (timeTargetKey === 'SCHEDULE_TIME') {
-      onChange(timeTargetKey, nextTimes[0] || '');
-      return;
+  const updateScheduleSlots = (nextSlots: ScheduleSlotDraft[]) => {
+    const source = nextSlots.length > 0
+      ? nextSlots
+      : [{ time: SCHEDULER_DEFAULT_TIME, markets: [...SCHEDULE_STOCK_MARKETS] }];
+    // Keep every row visible: if times collide, assign unused times to later rows.
+    const used: string[] = [];
+    const normalized = source.map((slot) => {
+      const rawTime = String(slot.time || '').trim();
+      const time = SCHEDULE_TIME_PATTERN.test(rawTime) && !used.includes(rawTime)
+        ? rawTime
+        : nextAvailableScheduleTime(used, SCHEDULE_TIME_PATTERN.test(rawTime) ? rawTime : SCHEDULER_DEFAULT_TIME);
+      used.push(time);
+      return {
+        ...slot,
+        time,
+        markets: slot.markets.length > 0 ? slot.markets : [...SCHEDULE_STOCK_MARKETS],
+      };
+    });
+    onChange('SCHEDULE_SLOTS', serializeScheduleSlots(normalized));
+    const timesValue = serializeScheduleTimesFromSlots(normalized);
+    if (scheduleTimesItem) {
+      onChange('SCHEDULE_TIMES', timesValue);
+    } else if (scheduleTimeItem) {
+      onChange('SCHEDULE_TIME', normalized[0]?.time || SCHEDULER_DEFAULT_TIME);
+    } else {
+      onChange('SCHEDULE_TIMES', timesValue);
     }
-    onChange(timeTargetKey, serializeScheduleTimes(nextTimes));
   };
 
   const runSchedulerNow = async () => {
@@ -715,37 +762,53 @@ const SchedulerSettingsCard: React.FC<SchedulerSettingsCardProps> = ({
                 <Clock className="h-4 w-4" aria-hidden="true" />
                 {t('settings.schedulerTimes')}
               </div>
-              <div className="flex flex-wrap items-center gap-2">
-                {scheduleTimes.map((time, index) => (
+              <div className="space-y-2" data-testid="scheduler-slots-list">
+                {scheduleSlots.map((slot, index) => (
                   <div
-                    key={index}
-                    className="inline-flex h-11 shrink-0 items-center gap-1 rounded-xl border settings-border bg-card/90 p-1 shadow-inner"
+                    key={`slot-${index}`}
+                    className="flex flex-col gap-2 rounded-xl border settings-border bg-card/90 p-2 shadow-inner sm:flex-row sm:items-center"
+                    aria-label={t('settings.schedulerSlotAria', { index: index + 1 })}
                   >
                     <input
                       data-testid={`scheduler-time-input-${index}`}
                       type="time"
-                      value={SCHEDULE_TIME_PATTERN.test(time) ? time : ''}
+                      value={SCHEDULE_TIME_PATTERN.test(slot.time) ? slot.time : ''}
                       aria-label={t('settings.schedulerTimeInputAria', { index: index + 1 })}
-                      className="h-9 w-[8.75rem] rounded-lg border-none bg-transparent px-2 text-sm font-medium text-foreground outline-none transition focus:bg-background/60 focus:ring-2 focus:ring-cyan/20"
+                      className="h-9 w-full rounded-lg border settings-border bg-transparent px-2 text-sm font-medium text-foreground outline-none transition focus:bg-background/60 focus:ring-2 focus:ring-cyan/20 sm:w-[8.75rem]"
                       disabled={disabled}
                       onChange={(event) => {
-                        const nextTimes = scheduleTimes.map((currentTime, currentIndex) => (
-                          currentIndex === index ? event.target.value : currentTime
+                        const nextSlots = scheduleSlots.map((currentSlot, currentIndex) => (
+                          currentIndex === index
+                            ? { ...currentSlot, time: event.target.value }
+                            : currentSlot
                         ));
-                        updateScheduleTimes(nextTimes);
+                        updateScheduleSlots(nextSlots);
                       }}
                     />
-                    {scheduleTimes.length > 1 ? (
+                    <ScheduleMarketMultiSelect
+                      value={slot.markets}
+                      disabled={disabled}
+                      aria-label={t('settings.schedulerSelectMarkets')}
+                      onChange={(markets) => {
+                        const nextSlots = scheduleSlots.map((currentSlot, currentIndex) => (
+                          currentIndex === index
+                            ? { ...currentSlot, markets }
+                            : currentSlot
+                        ));
+                        updateScheduleSlots(nextSlots);
+                      }}
+                    />
+                    {scheduleSlots.length > 1 ? (
                       <Button
                         type="button"
                         variant="settings-secondary"
                         size="sm"
-                        className="h-8 w-8 rounded-lg px-0"
+                        className="h-8 w-8 shrink-0 rounded-lg px-0 self-end sm:self-auto"
                         aria-label={t('settings.schedulerRemoveTime')}
                         title={t('settings.schedulerRemoveTime')}
                         disabled={disabled}
                         onClick={() => {
-                          updateScheduleTimes(scheduleTimes.filter((_, currentIndex) => currentIndex !== index));
+                          updateScheduleSlots(scheduleSlots.filter((_, currentIndex) => currentIndex !== index));
                         }}
                       >
                         <Trash2 className="h-4 w-4" aria-hidden="true" />
@@ -757,10 +820,19 @@ const SchedulerSettingsCard: React.FC<SchedulerSettingsCardProps> = ({
                   type="button"
                   variant="settings-secondary"
                   size="sm"
-                  className="h-11 shrink-0"
+                  className="h-11 w-full sm:w-auto"
                   data-testid="scheduler-add-time-button"
                   disabled={disabled}
-                  onClick={() => updateScheduleTimes([...scheduleTimes, SCHEDULER_DEFAULT_TIME])}
+                  onClick={() => updateScheduleSlots([
+                    ...scheduleSlots,
+                    {
+                      time: nextAvailableScheduleTime(
+                        scheduleSlots.map((slot) => slot.time),
+                        SCHEDULER_DEFAULT_TIME,
+                      ),
+                      markets: [...SCHEDULE_STOCK_MARKETS],
+                    },
+                  ])}
                 >
                   <Plus className="h-4 w-4" aria-hidden="true" />
                   {t('settings.schedulerAddTime')}
@@ -783,7 +855,9 @@ const SchedulerSettingsCard: React.FC<SchedulerSettingsCardProps> = ({
             <dl className="grid grid-cols-1 gap-2 text-xs">
               <div className="rounded-xl border settings-border bg-card/60 px-3 py-2">
                 <dt className="text-muted-text">{t('settings.schedulerEffectiveTimes')}</dt>
-                <dd className="mt-1 font-medium text-foreground">{effectiveStatusTimes.join(', ') || '-'}</dd>
+                <dd className="mt-1 font-medium text-foreground" data-testid="scheduler-effective-slots">
+                  {effectiveStatusLabels.join(' / ') || '-'}
+                </dd>
               </div>
               <div className="rounded-xl border settings-border bg-card/60 px-3 py-2">
                 <dt className="text-muted-text">{t('settings.schedulerNextRun')}</dt>

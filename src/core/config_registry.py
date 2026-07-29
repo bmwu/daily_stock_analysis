@@ -3053,6 +3053,35 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         ],
         "warning_codes": ["local_timezone"],
     },
+    "SCHEDULE_SLOTS": {
+        "title": "Schedule Slots",
+        "description": "Daily schedule slots as time|markets pairs separated by semicolons. Example: 09:00|us;15:30|cn,hk,jp. When set, overrides SCHEDULE_TIMES for scheduling and filters stocks/market-review by slot markets.",
+        "category": "system",
+        "data_type": "string",
+        "ui_control": "text",
+        "is_sensitive": False,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": "",
+        "options": [],
+        "validation": {
+            "pattern": r"^\s*(?:(?:[01]\d|2[0-3]):[0-5]\d(?:\|(?:cn|hk|us|jp|kr|tw)(?:,(?:cn|hk|us|jp|kr|tw))*)?(?:\s*;\s*(?:[01]\d|2[0-3]):[0-5]\d(?:\|(?:cn|hk|us|jp|kr|tw)(?:,(?:cn|hk|us|jp|kr|tw))*)?)*)?\s*$"
+        },
+        "display_order": 12,
+        "help_key": "settings.system.schedule",
+        "examples": [
+            "SCHEDULE_SLOTS=09:00|us;15:30|cn,hk,jp",
+            "SCHEDULE_TIMES=09:00,15:30",
+            "SCHEDULE_ENABLED=true",
+        ],
+        "docs": [
+            {
+                "label": "Full guide: configuration",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#其他配置",
+            },
+        ],
+        "warning_codes": ["local_timezone"],
+    },
     "HTTP_PROXY": {
         "title": "HTTP Proxy",
         "description": "Optional HTTP proxy endpoint.",
