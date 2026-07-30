@@ -1993,6 +1993,62 @@ class DataFetcherManager:
 
         return None
 
+    def get_realtime_quotes(
+        self,
+        stock_codes,
+        *,
+        prefer_tencent_batch: bool = True,
+        log_final_failure: bool = False,
+    ):
+        """
+        Batch realtime quotes for multiple codes.
+
+        Prefer Tencent multi-symbol request when available, then fill gaps via
+        per-code ``get_realtime_quote`` fallback.
+        """
+        from src.config import get_config
+
+        config = get_config()
+        if not config.enable_realtime_quote:
+            return {}
+
+        codes = []
+        seen = set()
+        for raw in stock_codes or []:
+            code = normalize_stock_code((raw or "").strip())
+            if not code or code in seen:
+                continue
+            seen.add(code)
+            codes.append(code)
+        if not codes:
+            return {}
+
+        results = {}
+        if prefer_tencent_batch:
+            akshare = self._get_fetcher_by_name("AkshareFetcher", capability="realtime_quote")
+            if akshare is not None and hasattr(akshare, "get_realtime_quotes_tencent"):
+                try:
+                    batch = akshare.get_realtime_quotes_tencent(codes) or {}
+                    for code, quote in batch.items():
+                        if quote is None:
+                            continue
+                        results[code] = self._enrich_realtime_quote(
+                            quote,
+                            realtime_cache_ttl=getattr(config, "realtime_cache_ttl", None),
+                        )
+                except Exception as exc:
+                    logger.info(
+                        "[实时行情批量] tencent batch failed: %s",
+                        type(exc).__name__,
+                    )
+
+        missing = [code for code in codes if code not in results]
+        for code in missing:
+            quote = self.get_realtime_quote(code, log_final_failure=log_final_failure)
+            if quote is not None:
+                results[code] = quote
+        return results
+
     # Fields worth supplementing from secondary sources when the primary
     # source returns None for them. Ordered by importance.
     _SUPPLEMENT_FIELDS = [

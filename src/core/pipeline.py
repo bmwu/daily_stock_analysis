@@ -853,6 +853,11 @@ class StockAnalysisPipeline:
                             context_snapshot=context_snapshot,
                             portfolio_context=portfolio_context,
                         )
+                        self._compute_trading_signals_after_analysis(
+                            result=result,
+                            context_snapshot=context_snapshot,
+                            portfolio_context=portfolio_context,
+                        )
                 except Exception as e:
                     record_history_run(
                         report_saved=False,
@@ -1680,6 +1685,11 @@ class StockAnalysisPipeline:
                             source_report_id=saved_history_id,
                             report_type=report_type.value,
                             context_snapshot=agent_context_snapshot,
+                            portfolio_context=portfolio_context,
+                        )
+                        self._compute_trading_signals_after_analysis(
+                            result=result,
+                            context_snapshot=context_snapshot,
                             portfolio_context=portfolio_context,
                         )
                     latest_diagnostic_snapshot = current_diagnostic_snapshot()
@@ -2646,6 +2656,107 @@ class StockAnalysisPipeline:
             )
 
     @staticmethod
+
+    def _compute_trading_signals_after_analysis(
+        self,
+        *,
+        result,
+        context_snapshot,
+        portfolio_context=None,
+    ) -> None:
+        """Best-effort four-color trading signal summary (fail-open)."""
+        try:
+            if not bool(getattr(self.config, "enable_trading_signals", False)):
+                return
+            from src.services.trading_signal_monitor import portfolio_snapshots_from_service_payload
+            from src.services.trading_signal_service import (
+                PortfolioSnapshot,
+                compute_signals,
+                summarize_trading_signals,
+            )
+
+            code = getattr(result, "code", None) or ""
+            if not code:
+                return
+
+            quote = None
+            bars = []
+            # Prefer already-fetched context to avoid extra network when possible.
+            realtime = None
+            if isinstance(context_snapshot, dict):
+                realtime = context_snapshot.get("realtime")
+            if isinstance(realtime, dict) and realtime.get("price") is not None:
+                quote = realtime
+            else:
+                try:
+                    quote = self.fetcher_manager.get_realtime_quote(code, log_final_failure=False)
+                except Exception:
+                    quote = None
+
+            # Daily bars: reuse analyzer trend df if present on result/context is uncommon;
+            # fetch short window via shared data manager.
+            try:
+                df = self.fetcher_manager.get_daily_data(code, days=90)
+                if df is not None and not getattr(df, "empty", True):
+                    for _, row in df.iterrows():
+                        # Best-effort column resolution
+                        def _pick(*names):
+                            for name in names:
+                                if name in df.columns:
+                                    return row[name]
+                                lower = {str(c).lower(): c for c in df.columns}
+                                if name.lower() in lower:
+                                    return row[lower[name.lower()]]
+                            return 0.0
+                        bars.append(
+                            {
+                                "open": float(_pick("open", "开盘") or 0),
+                                "close": float(_pick("close", "收盘") or 0),
+                                "high": float(_pick("high", "最高") or 0),
+                                "low": float(_pick("low", "最低") or 0),
+                                "volume": float(_pick("volume", "成交量") or 0),
+                            }
+                        )
+            except Exception as exc:
+                logger.debug(
+                    "Trading signal bars unavailable for %s: %s",
+                    code,
+                    type(exc).__name__,
+                )
+
+            if quote is None:
+                return
+
+            portfolio = None
+            if isinstance(portfolio_context, dict):
+                weight = portfolio_context.get("weight") or portfolio_context.get("portfolio_weight")
+                cost = portfolio_context.get("cost") or portfolio_context.get("avg_cost")
+                quantity = portfolio_context.get("quantity") or portfolio_context.get("qty") or 0
+                try:
+                    portfolio = PortfolioSnapshot(
+                        code=code,
+                        weight=float(weight or 0),
+                        cost=float(cost) if cost is not None else None,
+                        quantity=float(quantity or 0),
+                        frozen=float(portfolio_context.get("frozen") or 0),
+                        cost_warning=bool(portfolio_context.get("cost_warning") or False),
+                    )
+                except (TypeError, ValueError):
+                    portfolio = None
+
+            signal_result = compute_signals(quote=quote, bars=bars, portfolio=portfolio, code=code)
+            summary = summarize_trading_signals(signal_result)
+            if summary:
+                setattr(result, "trading_signal_summary", summary)
+        except Exception as exc:
+            logger.warning(
+                "Trading signal computation skipped: stock_code=%s error=%s",
+                getattr(result, "code", None),
+                exc,
+                exc_info=True,
+            )
+
+
     def _build_notification_run_snapshot(
         *,
         channel: str,

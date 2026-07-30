@@ -1,0 +1,231 @@
+# -*- coding: utf-8 -*-
+"""Shared trading-discipline rule catalog (R1-R77).
+
+Ported from 持仓雷达 rules.ts. This is a knowledge catalog:
+- Most entries are human/LLM soft constraints
+- Only a subset is referenced by the deterministic evaluator
+
+Namespace note: Skill YAML ``core_rules`` refers to baseline B1-B7
+(CORE_TRADING_SKILL_POLICY), not these R1-R77 ids.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional
+
+SIGNAL_COLOR_MEANINGS: Dict[str, str] = {
+    "green": "风险/警示（优先防风险，不是买点）",
+    "orange": "预警/需确认",
+    "blue": "观察",
+    "red": "偏多确认（观察买点，非自动下单）",
+}
+
+RULE_TEXT: Dict[str, str] = {
+    "1": "建立自己的股票池，只放最好的股票，并持续观察股性。",
+    "2": "只买上升趋势的股票；五日线和三十日线平行向上可视为较明确的上升通道。",
+    "3": "上涨趋势出现长上影线警惕见顶；下跌趋势出现长下影线观察见底。",
+    "4": "不是上升趋势的股票不参与，不陪主力建仓。",
+    "5": "养成绝对不追高的习惯。",
+    "6": "所有均线都向下发散时不买股票。",
+    "7": "巨量大阴线构造顶部后的下跌反抽不介入。",
+    "8": "短线最重要的指标是成交量；量增价升、量缩价跌通常更健康。",
+    "9": "底部股票开始涨停、放量、突破时列为买点观察。",
+    "10": "提高判断力和定力，不走捷径，不胡乱买票。",
+    "11": "保持耐心，避免因急躁导致交易失败。",
+    "12": "关注当前最热板块中的股票，优先观察龙头。",
+    "13": "重仓于起势，持仓于升势，减仓于末势，空仓于转势。",
+    "14": "强势踏准节奏，弱势忍手不动。",
+    "15": "筹码集中度达到12%只作为主力吸筹观察，不视为必然上涨。",
+    "16": "趋势确立后减少无谓操作。",
+    "17": "高位五日均线拐头向下，坚决退出观望。",
+    "18": "底部放量涨停的股票列为快速介入观察。",
+    "19": "中途缩量开盘涨停列为强势持有观察。",
+    "20": "股价高位放量时风险优先。",
+    "21": "缩量创新高列为趋势延续观察。",
+    "22": "突破盘整区列为买点观察。",
+    "23": "突然加速上涨、大阳线突破震荡区、明显放量、突破价格重心区，均列为启动信号。",
+    "24": "低位横盘出现单峰筹码峰，列为建仓观察。",
+    "25": "顶格筹码峰不移动，列为跟踪观察。",
+    "26": "行情好坏看量价，量价齐升列为进攻信号。",
+    "27": "拉升过程中筹码分散，出现见顶K线时离场观察。",
+    "28": "洗盘结束看筹码，先减再增形成双峰时列为观察。",
+    "29": "小阳建仓要跟进，但需要后续大行情确认。",
+    "30": "坚决不在股票跌停时抢反弹。",
+    "31": "避免因看不清而低卖，或因冲动而高买。",
+    "32": "卖点快速执行、止损优先；缩量上涨偏多，放量不涨警惕抛压。",
+    "33": "放量上涨趋势加强；缩量大跌警惕流动性风险。",
+    "34": "新量、新价、新高后的缩量回调不直接判定逃顶。",
+    "35": "放量滞涨要小心，无量上涨也要警惕。",
+    "36": "量小但出现大阳线，列为主力行为观察。",
+    "37": "一只股票的仓位不要超过三成。",
+    "38": "不要频繁交易。",
+    "39": "不要借钱炒股。",
+    "40": "不追求买在绝对最低、卖在绝对最高。",
+    "41": "跌破布林下轨列为超跌观察，不直接认定为买点。",
+    "42": "上穿布林中轨列为转强观察。",
+    "43": "底部三线缩口列为波动扩张前的观察信号。",
+    "44": "地量地价、市场很少有人抄底时列为底部观察。",
+    "45": "操作越多，失误和亏损概率越高。",
+    "46": "底部突然放量列为即将走出底部的观察信号。",
+    "47": "顶部突然放量列为见顶风险。",
+    "48": "股价上涨最终由资金流入推动，需结合量价验证。",
+    "49": "股票逐只处理，完成一个再做下一个，避免同时操作过多标的。",
+    "50": "跌停临近封死或未封死，都应以风险处置为先。",
+    "51": "交易要沉稳、心细、有胆识；只考虑已经走出趋势的股票。",
+    "52": "不追高、不盲目抄底，横盘少交易。",
+    "53": "出水芙蓉（一阳穿三线）列为后市看涨形态观察。",
+    "54": "涨停打开必须警惕卖压。",
+    "55": "涨停第二天不能快速涨停时，列为分批止盈观察。",
+    "56": "交易最重要的是保持平静。",
+    "57": "突破点没有成交量配合，不视为有效突破。",
+    "58": "尾盘五分钟杀跌列为次日波动观察，不保证高开。",
+    "59": "尾盘十分钟急拉列为次日回落风险，不保证低开。",
+    "60": "早盘急拉但未封板，警惕下午回落。",
+    "61": "早盘拉升后持续横盘，列为向上突破观察。",
+    "62": "快跌慢涨列为洗盘观察；快涨慢跌列为出货风险观察。",
+    "63": "亏损时先检查心态、纪律和仓位。",
+    "64": "势在股在，势增股增，势减股减，势走股走。",
+    "65": "做精一只股、一种形态和一种趋势。",
+    "66": "急涨不追，急跌不恐慌卖出；同时服从止损和破位规则。",
+    "67": "在预设买点买，在预设卖点卖。",
+    "68": "涨停后缩倍量列为强势延续观察。",
+    "69": "涨停后在涨停价上方以小阴小阳运行，列为强势观察。",
+    "70": "涨停后横盘突破列为继续上涨观察。",
+    "71": "缺口不补列为强势观察。",
+    "72": "每日复盘，在上涨板块里筛选个股。",
+    "73": "量增价升偏买入观察；量平价升或量减价升偏持有；量减价平偏观望；量减价跌或量平价跌偏卖出观察。",
+    "74": "锁定一个方法并不断复盘，不频繁更换体系。",
+    "75": "选股顺序：热点、题材、市场认同度、价格位置、流通规模、基本面。",
+    "76": "排除垃圾股、庄股、估值过高和下降趋势股票。",
+    "77": "主升浪形成但没有成交量配合时不介入。",
+}
+
+@dataclass(frozen=True)
+class RuleEntry:
+    id: str
+    text: str
+    tags: List[str] = field(default_factory=list)
+    computable: bool = False
+    baseline_map: List[int] = field(default_factory=list)
+
+
+def _default_tags(rule_id: str) -> List[str]:
+    tags: List[str] = []
+    rid = int(rule_id)
+    if rid in {2, 4, 6, 16, 64, 76}:
+        tags.append("trend")
+    if rid in {8, 20, 26, 32, 33, 35, 57, 73, 77}:
+        tags.append("volume")
+    if rid in {5, 17, 30, 37, 50, 54, 60, 66}:
+        tags.append("risk")
+    if rid in {37, 38, 39, 49, 63}:
+        tags.append("position")
+    if rid in {10, 11, 45, 56, 74}:
+        tags.append("mindset")
+    return tags
+
+
+COMPUTABLE_RULE_IDS = frozenset({
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "8",
+    "9",
+    "10",
+    "17",
+    "18",
+    "19",
+    "20",
+    "22",
+    "23",
+    "26",
+    "27",
+    "30",
+    "31",
+    "32",
+    "35",
+    "37",
+    "41",
+    "47",
+    "49",
+    "50",
+    "54",
+    "55",
+    "57",
+    "60",
+    "63",
+    "64",
+    "66",
+    "67",
+    "73",
+    "76",
+})
+
+RULE_BASELINE_MAP: Dict[str, List[int]] = {
+    "2": [2],
+    "4": [2],
+    "5": [1],
+    "6": [2],
+    "8": [3],
+    "17": [1, 2],
+    "20": [1],
+    "22": [4],
+    "23": [4],
+    "26": [3],
+    "37": [1],
+    "52": [1],
+    "66": [1],
+    "73": [3],
+    "76": [2],
+}
+
+
+def build_rule_catalog() -> Dict[str, RuleEntry]:
+    catalog: Dict[str, RuleEntry] = {}
+    for rule_id, text in RULE_TEXT.items():
+        catalog[rule_id] = RuleEntry(
+            id=rule_id,
+            text=text,
+            tags=_default_tags(rule_id),
+            computable=rule_id in COMPUTABLE_RULE_IDS,
+            baseline_map=list(RULE_BASELINE_MAP.get(rule_id, [])),
+        )
+    return catalog
+
+
+RULE_CATALOG: Dict[str, RuleEntry] = build_rule_catalog()
+
+
+def get_rule_text(rule_id: str) -> Optional[str]:
+    return RULE_TEXT.get(str(rule_id))
+
+
+def list_rules() -> List[Dict[str, object]]:
+    rows: List[Dict[str, object]] = []
+    for rule_id in sorted(RULE_CATALOG.keys(), key=lambda x: int(x)):
+        entry = RULE_CATALOG[rule_id]
+        rows.append({
+            "id": entry.id,
+            "text": entry.text,
+            "tags": list(entry.tags),
+            "computable": entry.computable,
+            "baseline_map": list(entry.baseline_map),
+        })
+    return rows
+
+
+def split_rule_ids(value: str) -> List[str]:
+    """Extract unique numeric rule ids from strings like ``17 · 20 · 47``."""
+    import re
+    found = re.findall(r"\d+", value or "")
+    out: List[str] = []
+    seen = set()
+    for item in found:
+        if item not in seen:
+            seen.add(item)
+            out.append(item)
+    return out
+
