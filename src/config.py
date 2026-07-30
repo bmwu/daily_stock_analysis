@@ -742,6 +742,11 @@ class Config:
     alphasift_enabled: bool = False
     alphasift_install_spec: str = DEFAULT_ALPHASIFT_INSTALL_SPEC
 
+    # === Trading signals / market radar (opt-in) ===
+    enable_trading_signals: bool = False
+    trading_signal_notify_enabled: bool = True
+    trading_signal_notify_cooldown_seconds: int = 1800
+
     # === AI 分析配置 ===
     generation_backend: str = LITELLM_BACKEND_ID
     generation_fallback_backend: str = LITELLM_BACKEND_ID
@@ -2121,6 +2126,18 @@ class Config:
                 DEFAULT_ALPHASIFT_INSTALL_SPEC
                 if os.getenv('ALPHASIFT_INSTALL_SPEC') is None
                 else os.getenv('ALPHASIFT_INSTALL_SPEC', '').strip()
+            ),
+            enable_trading_signals=parse_env_bool(
+                os.getenv('ENABLE_TRADING_SIGNALS'), default=False
+            ),
+            trading_signal_notify_enabled=parse_env_bool(
+                os.getenv('TRADING_SIGNAL_NOTIFY_ENABLED'), default=True
+            ),
+            trading_signal_notify_cooldown_seconds=parse_env_int(
+                os.getenv('TRADING_SIGNAL_NOTIFY_COOLDOWN_SECONDS'),
+                1800,
+                field_name='TRADING_SIGNAL_NOTIFY_COOLDOWN_SECONDS',
+                minimum=0,
             ),
         )
     

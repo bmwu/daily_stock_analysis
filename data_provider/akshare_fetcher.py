@@ -258,6 +258,83 @@ def _to_sina_tx_symbol(stock_code: str) -> str:
     return f"sz{base}"
 
 
+def _build_tencent_quote_from_fields(
+    stock_code: str,
+    fields: List[str],
+) -> Optional[UnifiedRealtimeQuote]:
+    """Build UnifiedRealtimeQuote from a single Tencent qt.gtimg.cn ~ field list."""
+    if len(fields) < 45:
+        return None
+    amount = _parse_tencent_amount(fields)
+    return UnifiedRealtimeQuote(
+        code=stock_code,
+        name=fields[1] if len(fields) > 1 else "",
+        source=RealtimeSource.TENCENT,
+        price=safe_float(fields[3]),
+        change_pct=safe_float(fields[32]),
+        change_amount=safe_float(fields[31]) if len(fields) > 31 else None,
+        volume=_normalize_tencent_volume(fields),
+        amount=amount,
+        open_price=safe_float(fields[5]),
+        high=safe_float(fields[33]) if len(fields) > 33 else None,
+        low=safe_float(fields[34]) if len(fields) > 34 else None,
+        pre_close=safe_float(fields[4]),
+        turnover_rate=safe_float(fields[38]) if len(fields) > 38 else None,
+        amplitude=safe_float(fields[43]) if len(fields) > 43 else None,
+        volume_ratio=safe_float(fields[49]) if len(fields) > 49 else None,
+        pe_ratio=safe_float(fields[39]) if len(fields) > 39 else None,
+        pb_ratio=safe_float(fields[46]) if len(fields) > 46 else None,
+        circ_mv=safe_float(fields[44]) * 100000000 if len(fields) > 44 and fields[44] else None,
+        total_mv=safe_float(fields[45]) * 100000000 if len(fields) > 45 and fields[45] else None,
+    )
+
+
+def _parse_tencent_realtime_payload(
+    content: str,
+    *,
+    requested_codes: Optional[List[str]] = None,
+) -> Dict[str, UnifiedRealtimeQuote]:
+    """
+    Parse one or more Tencent realtime rows from a qt.gtimg.cn response body.
+
+    Payload shape: ``v_sh600519="...";v_sz000001="...";``
+    """
+    results: Dict[str, UnifiedRealtimeQuote] = {}
+    if not content or not content.strip():
+        return results
+
+    code_by_symbol: Dict[str, str] = {}
+    for code in requested_codes or []:
+        normalized = (code or "").strip()
+        if not normalized:
+            continue
+        code_by_symbol[_to_sina_tx_symbol(normalized)] = normalized
+
+    for chunk in content.strip().split(";"):
+        chunk = chunk.strip()
+        if not chunk or "=" not in chunk:
+            continue
+        left, _, right = chunk.partition("=")
+        symbol_key = left.strip()
+        if symbol_key.startswith("v_"):
+            symbol_key = symbol_key[2:]
+        data_start = right.find('"')
+        data_end = right.rfind('"')
+        if data_start == -1 or data_end == -1 or data_end <= data_start:
+            continue
+        fields = right[data_start + 1:data_end].split("~")
+        if len(fields) < 3:
+            continue
+        raw_code = (fields[2] or "").split(".")[0].strip()
+        stock_code = code_by_symbol.get(symbol_key) or raw_code
+        if not stock_code:
+            continue
+        quote = _build_tencent_quote_from_fields(stock_code, fields)
+        if quote is not None and quote.has_basic_data():
+            results[stock_code] = quote
+    return results
+
+
 def _classify_realtime_http_error(exc: Exception) -> Tuple[str, str]:
     """
     Classify Sina/Tencent realtime quote failures into stable categories.
@@ -1279,73 +1356,24 @@ class AkshareFetcher(BaseFetcher):
                 circuit_breaker.record_failure(source_key, failure_message)
                 return None
             
-            # 提取数据
-            data_start = content.find('"')
-            data_end = content.rfind('"')
-            if data_start == -1 or data_end == -1:
+            parsed = _parse_tencent_realtime_payload(content, requested_codes=[stock_code])
+            quote = parsed.get(stock_code)
+            if quote is None:
                 failure_message = _build_realtime_failure_message(
                     source_name="腾讯",
                     endpoint=TENCENT_REALTIME_ENDPOINT,
                     stock_code=stock_code,
                     symbol=symbol,
                     category="malformed_payload",
-                    detail="quote payload missing quotes",
+                    detail="unable to parse quote payload",
                     elapsed=api_elapsed,
                     error_type="MalformedPayload",
                 )
                 logger.info(failure_message)
                 circuit_breaker.record_failure(source_key, failure_message)
                 return None
-            
-            data_str = content[data_start+1:data_end]
-            fields = data_str.split('~')
 
-            if len(fields) < 45:
-                failure_message = _build_realtime_failure_message(
-                    source_name="腾讯",
-                    endpoint=TENCENT_REALTIME_ENDPOINT,
-                    stock_code=stock_code,
-                    symbol=symbol,
-                    category="insufficient_fields",
-                    detail=f"field_count={len(fields)}",
-                    elapsed=api_elapsed,
-                    error_type="InsufficientFields",
-                )
-                logger.info(failure_message)
-                circuit_breaker.record_failure(source_key, failure_message)
-                return None
-            
             circuit_breaker.record_success(source_key)
-            
-            # 腾讯数据字段顺序（完整）：
-            # 1:名称 2:代码 3:最新价 4:昨收 5:今开 6:成交量 7:外盘 8:内盘
-            # 9-28:买卖五档 30:时间戳 31:涨跌额 32:涨跌幅(%) 33:最高 34:最低 35:收盘/成交量/成交额
-            # 36:成交量(口径随 payload 变化) 37:成交额(万) 38:换手率(%) 39:市盈率 43:振幅(%)
-            # 44:流通市值(亿) 45:总市值(亿) 46:市净率 47:涨停价 48:跌停价 49:量比
-            # 使用 realtime_types.py 中的统一转换函数
-            amount = _parse_tencent_amount(fields)
-            quote = UnifiedRealtimeQuote(
-                code=stock_code,
-                name=fields[1] if len(fields) > 1 else "",
-                source=RealtimeSource.TENCENT,
-                price=safe_float(fields[3]),
-                change_pct=safe_float(fields[32]),
-                change_amount=safe_float(fields[31]) if len(fields) > 31 else None,
-                volume=_normalize_tencent_volume(fields),
-                amount=amount,
-                open_price=safe_float(fields[5]),
-                high=safe_float(fields[33]) if len(fields) > 33 else None,  # 修正：字段 33 是最高价
-                low=safe_float(fields[34]) if len(fields) > 34 else None,  # 修正：字段 34 是最低价
-                pre_close=safe_float(fields[4]),
-                turnover_rate=safe_float(fields[38]) if len(fields) > 38 else None,
-                amplitude=safe_float(fields[43]) if len(fields) > 43 else None,
-                volume_ratio=safe_float(fields[49]) if len(fields) > 49 else None,  # 量比
-                pe_ratio=safe_float(fields[39]) if len(fields) > 39 else None,  # 市盈率
-                pb_ratio=safe_float(fields[46]) if len(fields) > 46 else None,  # 市净率
-                circ_mv=safe_float(fields[44]) * 100000000 if len(fields) > 44 and fields[44] else None,  # 流通市值(亿->元)
-                total_mv=safe_float(fields[45]) * 100000000 if len(fields) > 45 and fields[45] else None,  # 总市值(亿->元)
-            )
-            
             logger.info(
                 f"[实时行情-腾讯] {stock_code} {quote.name}: endpoint={TENCENT_REALTIME_ENDPOINT}, "
                 f"价格={quote.price}, 涨跌={quote.change_pct}%, 量比={quote.volume_ratio}, "
@@ -1370,6 +1398,113 @@ class AkshareFetcher(BaseFetcher):
             circuit_breaker.record_failure(source_key, failure_message)
             return None
     
+    def get_realtime_quotes_tencent(
+        self,
+        stock_codes: List[str],
+        *,
+        chunk_size: int = 50,
+    ) -> Dict[str, UnifiedRealtimeQuote]:
+        """
+        Batch-fetch A-share realtime quotes from Tencent qt.gtimg.cn.
+
+        Falls back to empty dict on total failure; partial success is returned.
+        """
+        circuit_breaker = get_realtime_circuit_breaker()
+        source_key = "akshare_tencent"
+        if not circuit_breaker.is_available(source_key):
+            logger.info("[实时行情-腾讯批量] circuit open, skip batch request")
+            return {}
+
+        codes: List[str] = []
+        seen = set()
+        for raw in stock_codes or []:
+            code = (raw or "").strip()
+            if not code or code in seen:
+                continue
+            seen.add(code)
+            codes.append(code)
+        if not codes:
+            return {}
+
+        results: Dict[str, UnifiedRealtimeQuote] = {}
+        headers = {
+            "Referer": "http://finance.qq.com",
+            "User-Agent": random.choice(USER_AGENTS),
+        }
+        size = max(1, int(chunk_size or 50))
+        for start in range(0, len(codes), size):
+            chunk = codes[start:start + size]
+            symbols = [_to_sina_tx_symbol(code) for code in chunk]
+            url = f"http://{TENCENT_REALTIME_ENDPOINT}={','.join(symbols)}"
+            api_start = time.time()
+            try:
+                logger.info(
+                    "[API调用] 腾讯财经批量实时行情: endpoint=%s, count=%s",
+                    TENCENT_REALTIME_ENDPOINT,
+                    len(chunk),
+                )
+                self._enforce_rate_limit()
+                response = requests.get(url, headers=headers, timeout=10)
+                response.encoding = "gbk"
+                api_elapsed = time.time() - api_start
+                if response.status_code != 200:
+                    failure_message = _build_realtime_failure_message(
+                        source_name="腾讯",
+                        endpoint=TENCENT_REALTIME_ENDPOINT,
+                        stock_code=",".join(chunk[:3]),
+                        symbol=",".join(symbols[:3]),
+                        category="http_status",
+                        detail=f"HTTP {response.status_code}",
+                        elapsed=api_elapsed,
+                        error_type="HTTPStatus",
+                    )
+                    logger.info(failure_message)
+                    circuit_breaker.record_failure(source_key, failure_message)
+                    continue
+                parsed = _parse_tencent_realtime_payload(
+                    response.text,
+                    requested_codes=chunk,
+                )
+                if not parsed:
+                    failure_message = _build_realtime_failure_message(
+                        source_name="腾讯",
+                        endpoint=TENCENT_REALTIME_ENDPOINT,
+                        stock_code=",".join(chunk[:3]),
+                        symbol=",".join(symbols[:3]),
+                        category="empty_response",
+                        detail="empty batch quote payload",
+                        elapsed=api_elapsed,
+                        error_type="EmptyResponse",
+                    )
+                    logger.info(failure_message)
+                    circuit_breaker.record_failure(source_key, failure_message)
+                    continue
+                circuit_breaker.record_success(source_key)
+                results.update(parsed)
+                logger.info(
+                    "[实时行情-腾讯批量] ok count=%s/%s elapsed=%.2fs",
+                    len(parsed),
+                    len(chunk),
+                    api_elapsed,
+                )
+            except Exception as e:
+                api_elapsed = time.time() - api_start
+                category, detail = _classify_realtime_http_error(e)
+                failure_message = _build_realtime_failure_message(
+                    source_name="腾讯",
+                    endpoint=TENCENT_REALTIME_ENDPOINT,
+                    stock_code=",".join(chunk[:3]),
+                    symbol=",".join(symbols[:3]),
+                    category=category,
+                    detail=detail,
+                    elapsed=api_elapsed,
+                    error_type=type(e).__name__,
+                )
+                logger.info(failure_message)
+                circuit_breaker.record_failure(source_key, failure_message)
+        return results
+
+
     def _get_etf_realtime_quote(self, stock_code: str) -> Optional[UnifiedRealtimeQuote]:
         """
         获取 ETF 基金实时行情数据

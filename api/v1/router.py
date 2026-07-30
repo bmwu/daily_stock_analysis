@@ -26,6 +26,7 @@ from api.v1.endpoints import (
     stocks,
     system_config,
     usage,
+    trading_signals,
 )
 
 # 创建 v1 版本主路由。
@@ -102,6 +103,12 @@ router.include_router(
     alphasift.router,
     prefix="/alphasift",
     tags=["AlphaSift"]
+)
+
+router.include_router(
+    trading_signals.router,
+    prefix="/trading-signals",
+    tags=["TradingSignals"]
 )
 
 router.include_router(

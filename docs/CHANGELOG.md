@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [新功能] 新增四色盯盘信号 M1：共享腾讯批量实时行情、R1-R77 纪律规则 Catalog、确定性 Evaluator，以及 opt-in 的 `/api/v1/trading-signals`（不污染 DecisionSignal）。
 - [新功能] 定时任务支持按时间槽位指定市场（SCHEDULE_SLOTS），Web 设置页以“时间 + 市场多选”行配置；触发时只分析对应市场个股，大盘复盘也跟随该槽位市场。
 - [修复] 统一等价股票代码的本地日线候选与同源窗口解析；冲突沪深交易所代码不再降级匹配裸码，回测仅接受快照或交易日历确认的起点，并在同一起点中优先完整的单一代码窗口。
 - [新功能] 新增按 individual SkillAgent 自身 signal、版本化 engine 与本地已存同源日线窗口计算并持久化 `skill_opinion_outcomes` 的核心服务；本阶段不提供管理员 API、表现统计、样本充足度或权重调整。

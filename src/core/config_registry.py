@@ -1169,6 +1169,32 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         ],
         "warning_codes": [],
     },
+    "ENABLE_TRADING_SIGNALS": {
+        "title": "Enable Trading Signals",
+        "description": "Enable four-color discipline trading signals (R1-R77) for on-demand monitoring APIs and optional analysis summary.",
+        "category": "data_source",
+        "data_type": "boolean",
+        "ui_control": "switch",
+        "is_sensitive": False,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": "false",
+        "options": [],
+        "validation": {},
+        "display_order": 221,
+        "help_key": "settings.data_source.ENABLE_TRADING_SIGNALS",
+        "examples": [
+            "ENABLE_TRADING_SIGNALS=false",
+            "ENABLE_TRADING_SIGNALS=true",
+        ],
+        "docs": [
+            {
+                "label": "Market radar port plan",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/market-radar-port-plan.md",
+            },
+        ],
+        "warning_codes": [],
+    },
     "ENABLE_CHIP_DISTRIBUTION": {
         "title": "Enable Chip Distribution",
         "description": "Enable chip distribution analysis. May be unstable; recommended to disable on cloud deployments.",
@@ -5079,7 +5105,7 @@ def _infer_category(key: str) -> str:
             "NEWS_",
             "BIAS_",
         )
-    ) or key in ("ENABLE_REALTIME_QUOTE", "ENABLE_CHIP_DISTRIBUTION"):
+    ) or key in ("ENABLE_REALTIME_QUOTE", "ENABLE_TRADING_SIGNALS", "ENABLE_CHIP_DISTRIBUTION"):
         return "data_source"
     if key.startswith((
         "WECHAT",
