@@ -37,11 +37,13 @@
 - 不把 77 条文案当成 77 条可执行规则
 - MVP 先 A 股/ETF（6 位数字代码）
 
-### M2 — 实时大盘页（待做）
+### M2 — 实时大盘页（已实现方向）
 
 - API：`GET /api/v1/market-radar/overview`、`GET /api/v1/market-radar/chart`
-- Web：`apps/dsa-web` 增加 MarketRadar 页（指数条、持仓/自选、分时/K 线、信号中心、规则面板）
-- 持仓/自选复用现有 Portfolio / watchlist API，不用 localStorage 再造账本
+- Web：`apps/dsa-web/src/pages/MarketRadarPage.tsx` + `components/market-radar/*`
+- 路由：侧边栏「实时大盘」→ `/market-radar`
+- 持仓/自选复用现有 Portfolio / watchlist API；持仓管理跳转 `/portfolio`，不用 localStorage 再造账本
+- 仍依赖 `ENABLE_TRADING_SIGNALS=true`
 
 ### M3 — 增强（待做）
 

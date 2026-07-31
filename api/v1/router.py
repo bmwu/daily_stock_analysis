@@ -27,6 +27,7 @@ from api.v1.endpoints import (
     system_config,
     usage,
     trading_signals,
+    market_radar,
 )
 
 # 创建 v1 版本主路由。
@@ -109,6 +110,12 @@ router.include_router(
     trading_signals.router,
     prefix="/trading-signals",
     tags=["TradingSignals"]
+)
+
+router.include_router(
+    market_radar.router,
+    prefix="/market-radar",
+    tags=["MarketRadar"]
 )
 
 router.include_router(
