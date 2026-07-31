@@ -7,17 +7,16 @@ import type { MarketRadarChart, MarketRadarOverview } from '../types/marketRadar
 const DEFAULT_POLL_MS = 30000;
 const chartCache = new Map<string, MarketRadarChart>();
 
-function chartCacheKey(code: string, mode: string): string {
-  return `${code}:${mode}`;
-}
-
 export function useMarketRadarOverview(pollMs: number = DEFAULT_POLL_MS) {
   const [data, setData] = useState<MarketRadarOverview | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<ParsedApiError | null>(null);
   const timerRef = useRef<number | null>(null);
+  const firstRef = useRef(true);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (manual = false) => {
+    if (manual) setRefreshing(true);
     try {
       const overview = await marketRadarApi.getOverview();
       setData(overview);
@@ -26,6 +25,8 @@ export function useMarketRadarOverview(pollMs: number = DEFAULT_POLL_MS) {
       setError(getParsedApiError(err));
     } finally {
       setLoading(false);
+      setRefreshing(false);
+      firstRef.current = false;
     }
   }, []);
 
@@ -43,14 +44,16 @@ export function useMarketRadarOverview(pollMs: number = DEFAULT_POLL_MS) {
     };
   }, [pollMs, refresh]);
 
-  return { data, loading, error, refresh };
+  return { data, loading, refreshing, error, refresh };
 }
 
-export function useMarketRadarChart(code: string | null, mode: 'intraday' | 'kline' = 'intraday') {
+/** Original radar loads both intraday + kline once per stock. */
+export function useMarketRadarChart(code: string | null) {
   const [data, setData] = useState<MarketRadarChart | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<ParsedApiError | null>(null);
   const requestIdRef = useRef(0);
+  const timerRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!code) {
@@ -60,8 +63,7 @@ export function useMarketRadarChart(code: string | null, mode: 'intraday' | 'kli
       return;
     }
 
-    const key = chartCacheKey(code, mode);
-    const cached = chartCache.get(key);
+    const cached = chartCache.get(code);
     if (cached) {
       setData(cached);
       setError(null);
@@ -70,18 +72,20 @@ export function useMarketRadarChart(code: string | null, mode: 'intraday' | 'kli
     const requestId = ++requestIdRef.current;
     let active = true;
 
-    async function load() {
-      setLoading(true);
+    async function load(showSpinner: boolean) {
+      if (showSpinner && !chartCache.get(code as string)) {
+        setLoading(true);
+      }
       try {
-        const chart = await marketRadarApi.getChart(code as string, mode);
+        const chart = await marketRadarApi.getChart(code as string, 'both');
         if (!active || requestId !== requestIdRef.current) return;
-        chartCache.set(key, chart);
+        chartCache.set(code as string, chart);
         setData(chart);
         setError(null);
       } catch (err) {
         if (!active || requestId !== requestIdRef.current) return;
         setError(getParsedApiError(err));
-        if (!cached) {
+        if (!chartCache.get(code as string)) {
           setData(null);
         }
       } finally {
@@ -91,12 +95,18 @@ export function useMarketRadarChart(code: string | null, mode: 'intraday' | 'kli
       }
     }
 
-    void load();
+    void load(true);
+    timerRef.current = window.setInterval(() => {
+      void load(false);
+    }, 30000);
 
     return () => {
       active = false;
+      if (timerRef.current != null) {
+        window.clearInterval(timerRef.current);
+      }
     };
-  }, [code, mode]);
+  }, [code]);
 
   return {
     data: code ? data : null,
