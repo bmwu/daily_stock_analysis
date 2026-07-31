@@ -4,13 +4,17 @@
 from __future__ import annotations
 
 import logging
+import random
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional, Sequence
 
+import requests
+
 from data_provider import DataFetcherManager
+from data_provider.akshare_fetcher import USER_AGENTS
 from data_provider.base import normalize_stock_code
 from src.services.trading_signal_service import (
     PortfolioSnapshot,
-    TradingSignalResult,
     compute_signals,
 )
 
@@ -21,7 +25,6 @@ def _bars_from_dataframe(df) -> List[Dict[str, float]]:
     if df is None or getattr(df, "empty", True):
         return []
     rows: List[Dict[str, float]] = []
-    # Accept both Chinese and English column names used across fetchers.
     colmap = {
         "open": ("open", "开盘", "Open"),
         "close": ("close", "收盘", "Close"),
@@ -55,6 +58,50 @@ def _bars_from_dataframe(df) -> List[Dict[str, float]]:
     return rows
 
 
+def _listed_symbol(code: str) -> str:
+    code = (code or "").strip()
+    if code.startswith(("5", "6", "9")):
+        return f"sh{code}"
+    return f"sz{code}"
+
+
+def fetch_tencent_daily_bars(code: str, *, days: int = 90, timeout: float = 5.0) -> List[Dict[str, float]]:
+    """Fast path: direct Tencent fq kline (same source as 持仓雷达 getBars)."""
+    symbol = _listed_symbol(code)
+    url = (
+        "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+        f"?param={symbol},day,,,{max(30, int(days))},qfq"
+    )
+    headers = {
+        "User-Agent": random.choice(USER_AGENTS),
+        "Referer": "https://gu.qq.com/",
+        "Accept": "application/json,text/plain,*/*",
+    }
+    response = requests.get(url, headers=headers, timeout=timeout)
+    response.raise_for_status()
+    payload = response.json()
+    node = (payload.get("data") or {}).get(symbol) or {}
+    raw = node.get("qfqday") or node.get("day") or []
+    rows: List[Dict[str, float]] = []
+    for row in raw:
+        if not isinstance(row, (list, tuple)) or len(row) < 6:
+            continue
+        try:
+            rows.append(
+                {
+                    "date": str(row[0]),
+                    "open": float(row[1]),
+                    "close": float(row[2]),
+                    "high": float(row[3]),
+                    "low": float(row[4]),
+                    "volume": float(row[5]),
+                }
+            )
+        except (TypeError, ValueError):
+            continue
+    return rows
+
+
 def _portfolio_snapshots_from_payload(snapshot: Optional[Dict[str, Any]]) -> Dict[str, PortfolioSnapshot]:
     """Build per-code PortfolioSnapshot from PortfolioService.get_portfolio_snapshot()."""
     out: Dict[str, PortfolioSnapshot] = {}
@@ -63,7 +110,6 @@ def _portfolio_snapshots_from_payload(snapshot: Optional[Dict[str, Any]]) -> Dic
 
     accounts = snapshot.get("accounts")
     if not isinstance(accounts, list):
-        # Some callers may pass a single account public payload.
         if isinstance(snapshot.get("positions"), list):
             accounts = [snapshot]
         else:
@@ -112,6 +158,27 @@ class TradingSignalMonitor:
     def __init__(self, data_manager: Optional[DataFetcherManager] = None):
         self.data_manager = data_manager or DataFetcherManager()
 
+    def _load_bars_map(self, codes: Sequence[str]) -> Dict[str, List[Dict[str, float]]]:
+        """Parallel Tencent daily bars; skip slow multi-source daily failover on overview path."""
+        if not codes:
+            return {}
+        results: Dict[str, List[Dict[str, float]]] = {}
+        workers = min(8, max(1, len(codes)))
+
+        def _one(code: str):
+            try:
+                return code, fetch_tencent_daily_bars(code, days=90, timeout=5.0)
+            except Exception as exc:
+                logger.info("tencent bars unavailable for %s: %s", code, type(exc).__name__)
+                return code, []
+
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [pool.submit(_one, code) for code in codes]
+            for fut in as_completed(futures):
+                code, bars = fut.result()
+                results[code] = bars
+        return results
+
     def compute_for_codes(
         self,
         codes: Sequence[str],
@@ -125,7 +192,6 @@ class TradingSignalMonitor:
             code = normalize_stock_code((raw or "").strip())
             if not code or code in seen:
                 continue
-            # M1: A-share / ETF numeric codes only for tencent batch path.
             if not code.isdigit() or len(code) != 6:
                 continue
             seen.add(code)
@@ -133,6 +199,7 @@ class TradingSignalMonitor:
 
         quotes = self.data_manager.get_realtime_quotes(normalized) if normalized else {}
         portfolio_by_code = portfolio_by_code or {}
+        bars_map = self._load_bars_map(normalized) if include_bars else {}
         items: List[Dict[str, Any]] = []
         errors: List[Dict[str, str]] = []
 
@@ -141,14 +208,9 @@ class TradingSignalMonitor:
             if quote is None:
                 errors.append({"code": code, "error": "quote_unavailable"})
                 continue
-            bars: List[Dict[str, float]] = []
-            if include_bars:
-                try:
-                    df = self.data_manager.get_daily_data(code, days=90)
-                    bars = _bars_from_dataframe(df)
-                except Exception as exc:
-                    logger.info("daily bars unavailable for %s: %s", code, type(exc).__name__)
-                    errors.append({"code": code, "error": f"bars_unavailable:{type(exc).__name__}"})
+            bars = bars_map.get(code) or []
+            if include_bars and not bars:
+                errors.append({"code": code, "error": "bars_unavailable"})
             result = compute_signals(
                 quote=quote,
                 bars=bars,
