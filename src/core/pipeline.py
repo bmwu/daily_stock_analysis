@@ -2655,8 +2655,6 @@ class StockAnalysisPipeline:
                 exc_info=True,
             )
 
-    @staticmethod
-
     def _compute_trading_signals_after_analysis(
         self,
         *,
@@ -2756,7 +2754,7 @@ class StockAnalysisPipeline:
                 exc_info=True,
             )
 
-
+    @staticmethod
     def _build_notification_run_snapshot(
         *,
         channel: str,

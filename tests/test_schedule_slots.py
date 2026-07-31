@@ -6,6 +6,7 @@ from __future__ import annotations
 import sys
 import unittest
 from datetime import datetime
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from src.scheduler import (
@@ -127,8 +128,18 @@ class SchedulerSlotsJobTestCase(unittest.TestCase):
             scheduler.set_daily_task(task, run_immediately=False)
 
             self.assertEqual([job.at_time for job in fake_schedule.jobs], ["09:00", "15:30"])
-            fake_schedule.jobs[0].job_func()
-            fake_schedule.jobs[1].job_func()
+            lease = SimpleNamespace(slot_key="test-slot")
+            with patch(
+                "src.core.scheduled_analysis_lock.try_begin_scheduled_slot",
+                return_value=lease,
+            ), patch(
+                "src.core.scheduled_analysis_lock.release_scheduled_slot",
+            ), patch(
+                "src.config.get_config",
+                return_value=SimpleNamespace(database_path="./data/stock_analysis.db"),
+            ):
+                fake_schedule.jobs[0].job_func()
+                fake_schedule.jobs[1].job_func()
 
         self.assertEqual(calls, [["us"], ["cn", "hk"]])
 

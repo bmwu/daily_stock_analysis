@@ -17,19 +17,21 @@ type SettingsHelpMap = Record<string, SettingsHelpContent>;
 const settingsHelpZhCN: SettingsHelpMap = {
   'settings.base.STOCK_LIST': {
     title: '自选股列表',
-    summary: '配置需要分析的股票代码列表，是手动分析、定时任务和通知报告的基础输入。',
-    usage: '多个股票代码推荐使用英文逗号分隔；从表格或聊天中粘贴时，也会识别中文逗号、顿号、分号、空格和换行，并在保存后规范为英文逗号。',
+    summary: '配置需要分析的股票代码列表，是手动分析、定时任务和通知报告的基础输入；与首页「加入自选」是同一份数据。',
+    usage: '多个股票代码推荐使用英文逗号分隔；从表格或聊天中粘贴时，也会识别中文逗号、顿号、分号、空格和换行，并在保存后规范为英文逗号。也可在首页/报告页用「加入自选」增删，结果会写回本列表。',
     valueNotes: [
       '定时模式每次触发前会重新读取当前保存的 STOCK_LIST。',
       '如果命令行临时传入 --stocks，只影响本次手动运行，不会锁定后续计划任务。',
       '邮件分组里的 STOCK_GROUP_N 应写成 STOCK_LIST 的子集，只影响邮件收件人，不改变分析范围。',
+      '实时大盘「我的自选」、告警目标范围「自选股」、四色信号 source=watchlist 都读取本列表；持仓账户是另一套数据，不会自动并入。',
     ],
     impact: [
-      '影响主分析任务、市场报告中的个股范围、通知推送内容和历史报告记录。',
+      '影响主分析任务、市场报告中的个股范围、通知推送内容、历史报告记录，以及实时大盘自选 / 告警自选宇宙。',
     ],
     notes: [
       '保存后的 STOCK_LIST 会统一写成英文逗号分隔。',
       '修改后保存配置即可供后续任务读取。',
+      'AI 建议、回测、告警「单标的」等输入框可手输任意代码，也可从本自选列表快捷选择。',
     ],
   },
   'settings.ai_model.GENERATION_BACKEND': {
@@ -1252,15 +1254,20 @@ const settingsHelpZhCN: SettingsHelpMap = {
 const settingsHelpEnUS: SettingsHelpMap = {
   'settings.base.STOCK_LIST': {
     title: 'Watchlist',
-    summary: 'Defines the stock codes used by analysis jobs and notification reports.',
-    usage: 'English commas are recommended. Pasted Chinese commas, enumeration commas, semicolons, spaces, and newlines are also recognized and normalized to English commas when saved.',
+    summary: 'Defines the stock codes used by analysis jobs and notification reports. This is the same list as Home “Add to watchlist”.',
+    usage: 'English commas are recommended. Pasted Chinese commas, enumeration commas, semicolons, spaces, and newlines are also recognized and normalized to English commas when saved. Home/report watchlist add/remove writes back to this same STOCK_LIST.',
     valueNotes: [
       'Scheduled mode rereads the saved STOCK_LIST before each run.',
       'A temporary --stocks argument only affects that manual run.',
       'STOCK_GROUP_N should be a subset of STOCK_LIST and only affects grouped email routing.',
+      'Market Radar “Watchlist”, alert target_scope=watchlist, and trading-signal source=watchlist all read this list. Portfolio holdings are a separate data set and are not merged automatically.',
     ],
-    impact: ['Affects analysis scope, notification content, and saved history reports.'],
-    notes: ['Saved STOCK_LIST values are written with English commas.', 'Save the setting before later tasks can read it.'],
+    impact: ['Affects analysis scope, notification content, saved history reports, Market Radar watchlist, and alert watchlist universe.'],
+    notes: [
+      'Saved STOCK_LIST values are written with English commas.',
+      'Save the setting before later tasks can read it.',
+      'AI Suggestions, Backtest, and alert single-symbol inputs still allow free typing, and can also pick quickly from this watchlist.',
+    ],
   },
   'settings.ai_model.GENERATION_BACKEND': {
     title: 'Analysis Generation Method',

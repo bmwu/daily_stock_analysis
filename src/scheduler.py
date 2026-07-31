@@ -372,11 +372,17 @@ class Scheduler:
             )
         )
 
-    def _slot_runner(self, markets: Optional[Sequence[str]]):
+    def _slot_runner(self, slot: "ScheduleSlot"):
         """Build a zero-arg callback that executes the daily task for one slot."""
+        markets = list(slot.markets) if slot.markets else None
+        slot_time = slot.time
 
         def _runner() -> None:
-            self._safe_run_task(markets=markets)
+            self._safe_run_task(
+                markets=markets,
+                slot_time=slot_time,
+                persist_claim=True,
+            )
 
         return _runner
 
@@ -397,8 +403,7 @@ class Scheduler:
         self._cancel_daily_job()
         self._daily_jobs = []
         for slot in candidates:
-            markets = list(slot.markets) if slot.markets else None
-            job = self.schedule.every().day.at(slot.time).do(self._slot_runner(markets))
+            job = self.schedule.every().day.at(slot.time).do(self._slot_runner(slot))
             self._daily_jobs.append(job)
         self._daily_job = self._daily_jobs[0] if self._daily_jobs else None
         self.schedule_slots = candidates
@@ -459,16 +464,52 @@ class Scheduler:
         """Public wrapper for runtime scheduler reconciliation."""
         self._refresh_daily_schedule_if_needed()
 
-    def _safe_run_task(self, markets: Optional[Sequence[str]] = None):
-        """安全执行任务（带异常捕获）"""
+    def _safe_run_task(
+        self,
+        markets: Optional[Sequence[str]] = None,
+        *,
+        slot_time: Optional[str] = None,
+        persist_claim: bool = False,
+    ):
+        """安全执行任务（带异常捕获）
+
+        Cross-process host lock: when multiple serve/schedule processes share the
+        same data directory, only the first claimant for a daily slot runs and
+        notifies. Startup ``run_immediately`` uses a non-persistent lock so a
+        later intentional restart can still run once.
+        """
         if self._task_callback is None:
             return
 
+        lease = None
         try:
+            from src.config import get_config
+            from src.core.scheduled_analysis_lock import (
+                release_scheduled_slot,
+                try_begin_scheduled_slot,
+            )
+
+            lease = try_begin_scheduled_slot(
+                get_config(),
+                slot_time=slot_time,
+                markets=markets,
+                persist_claim=persist_claim,
+            )
+            if lease is None:
+                logger.warning(
+                    "跳过定时任务：同机其他进程已占用或已完成该槽位 (time=%s markets=%s)",
+                    slot_time or "startup",
+                    ",".join(markets) if markets else "all",
+                )
+                return
+
             logger.info("=" * 50)
             logger.info(f"定时任务开始执行 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            if slot_time:
+                logger.info("本轮定时槽位: %s", slot_time)
             if markets:
                 logger.info("本轮限定市场: %s", ",".join(markets))
+            logger.info("定时槽位声明: %s", lease.slot_key)
             logger.info("=" * 50)
 
             try:
@@ -480,6 +521,13 @@ class Scheduler:
 
         except Exception as e:
             logger.exception(f"定时任务执行失败: {e}")
+        finally:
+            try:
+                from src.core.scheduled_analysis_lock import release_scheduled_slot
+            except Exception:
+                release_scheduled_slot = None  # type: ignore
+            if release_scheduled_slot is not None:
+                release_scheduled_slot(lease)
 
     def add_background_task(
         self,

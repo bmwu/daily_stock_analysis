@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [改进] 明确 `STOCK_LIST` 与首页自选为同一真源；AI 建议 / 回测 / 告警单标的输入框支持从自选（及可选近期/热门/持仓）快捷选择，仍可手输任意代码。
+- [修复] 同机多个 serve/schedule 进程共享数据目录时，定时槽位用跨进程声明锁去重，避免同一档（如 18:00）重复分析并连发多条推送。
 - [改进] 实时大盘页按持仓雷达像素级还原布局与图表交互（分时/K线十字线、四色信号中心、规则库面板），持仓/自选管理跳转 DSA 组合页。
 - [改进] 实时大盘加速：总览并行直连腾讯日K、指数优先腾讯批量；切股按当前分时/日K模式请求并做前端缓存，避免清空旧图；页面改为更紧凑的盯盘布局。
 - [新功能] 新增实时大盘 M2：`/api/v1/market-radar` overview/chart，以及 Web「实时大盘」页（指数、持仓/自选、分时/K线、四色信号与规则面板）。
