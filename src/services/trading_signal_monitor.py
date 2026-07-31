@@ -217,12 +217,52 @@ class TradingSignalMonitor:
                 portfolio=portfolio_by_code.get(code),
                 code=code,
             )
+            port = portfolio_by_code.get(code)
+            price = getattr(quote, "price", None)
+            try:
+                price_f = float(price) if price is not None else None
+            except (TypeError, ValueError):
+                price_f = None
+            cost = getattr(port, "cost", None) if port else None
+            qty = float(getattr(port, "quantity", 0) or 0) if port else 0.0
+            market_value = (price_f * qty) if price_f is not None and qty else None
+            profit = None
+            profit_percent = None
+            if price_f is not None and cost is not None and qty:
+                try:
+                    cost_f = float(cost)
+                    profit = (price_f - cost_f) * qty
+                    profit_percent = ((price_f / cost_f) - 1.0) * 100.0 if cost_f else None
+                except (TypeError, ValueError, ZeroDivisionError):
+                    profit = None
+                    profit_percent = None
+            if result.up_trend:
+                trend = "up"
+            elif result.down_trend:
+                trend = "down"
+            else:
+                trend = "mixed"
             items.append(
                 {
                     "code": code,
                     "name": getattr(quote, "name", "") or "",
-                    "price": getattr(quote, "price", None),
+                    "asset_type": getattr(port, "asset_type", None) if port else "A股",
+                    "price": price_f,
                     "change_pct": getattr(quote, "change_pct", None),
+                    "change": getattr(quote, "change_amount", None) or getattr(quote, "change", None),
+                    "open": getattr(quote, "open_price", None) or getattr(quote, "open", None),
+                    "high": getattr(quote, "high", None),
+                    "low": getattr(quote, "low", None),
+                    "previous_close": getattr(quote, "pre_close", None) or getattr(quote, "previous_close", None),
+                    "volume": getattr(quote, "volume", None),
+                    "amount": getattr(quote, "amount", None),
+                    "turnover": getattr(quote, "turnover_rate", None) or getattr(quote, "turnover", None),
+                    "market_value": market_value,
+                    "quantity": qty or None,
+                    "baseline_weight": getattr(port, "weight", None) if port else None,
+                    "profit": profit,
+                    "profit_percent": profit_percent,
+                    "trend": trend,
                     "quote_source": getattr(getattr(quote, "source", None), "value", getattr(quote, "source", None)),
                     **result.to_dict(),
                 }

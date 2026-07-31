@@ -11,16 +11,34 @@ export type MarketRadarSignal = {
 export type MarketRadarInstrument = {
   code: string;
   name: string;
+  assetType?: string;
   price?: number | null;
   changePct?: number | null;
+  change?: number | null;
+  open?: number | null;
+  high?: number | null;
+  low?: number | null;
+  previousClose?: number | null;
+  volume?: number | null;
+  amount?: number | null;
+  turnover?: number | null;
+  marketValue?: number | null;
+  quantity?: number | null;
+  baselineWeight?: number | null;
+  profit?: number | null;
+  profitPercent?: number | null;
   quoteSource?: string | null;
   signals: MarketRadarSignal[];
   ma5?: number | null;
   ma30?: number | null;
   volumeRatio?: number | null;
   position60?: number | null;
+  bollMid?: number | null;
+  bollUpper?: number | null;
+  bollLower?: number | null;
   upTrend?: boolean;
   downTrend?: boolean;
+  trend?: 'up' | 'down' | 'mixed';
 };
 
 export type MarketRadarIndex = {
@@ -38,6 +56,8 @@ export type MarketRadarAccount = {
   marketValue?: number | null;
   unrealizedPnl?: number | null;
   realizedPnl?: number | null;
+  dailyProfit?: number | null;
+  totalProfit?: number | null;
   currency?: string | null;
   accountCount?: number | null;
 };
@@ -81,5 +101,5 @@ export type MarketRadarChart = {
   intraday: MarketRadarIntradayPoint[];
   candles: MarketRadarCandle[];
   provider: string;
-  mode: string;
+  mode?: string;
 };

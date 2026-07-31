@@ -315,6 +315,8 @@ class MarketRadarService:
                 "market_value": snapshot.get("total_market_value"),
                 "unrealized_pnl": snapshot.get("unrealized_pnl"),
                 "realized_pnl": snapshot.get("realized_pnl"),
+                "daily_profit": snapshot.get("daily_pnl") or snapshot.get("daily_profit"),
+                "total_profit": snapshot.get("unrealized_pnl"),
                 "currency": snapshot.get("currency"),
                 "account_count": snapshot.get("account_count"),
             }
