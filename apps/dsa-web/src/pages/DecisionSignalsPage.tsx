@@ -450,10 +450,6 @@ const DecisionSignalsPage: React.FC = () => {
   ), [historyCandidates, popularCandidates]);
 
   useEffect(() => {
-    document.title = t('decisionSignals.pageTitle');
-  }, [t]);
-
-  useEffect(() => {
     let mounted = true;
     void historyApi.getStockBarList({ limit: STOCK_CANDIDATE_LIMIT })
       .then((response) => {

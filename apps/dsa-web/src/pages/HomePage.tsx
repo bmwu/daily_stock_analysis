@@ -318,10 +318,6 @@ const HomePage: React.FC = () => {
   }, [clearDuplicateBannerTimer, duplicateError]);
 
   useEffect(() => {
-    document.title = t('home.pageTitle');
-  }, [t]);
-
-  useEffect(() => {
     let active = true;
     systemConfigApi.getSetupStatus()
       .then((status) => {

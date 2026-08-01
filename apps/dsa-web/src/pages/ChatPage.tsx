@@ -266,11 +266,6 @@ const ChatPage: React.FC = () => {
     };
   }, []);
 
-  // Set page title
-  useEffect(() => {
-    document.title = '问股 - DSA';
-  }, []);
-
   useEffect(() => {
     isMountedRef.current = true;
     return () => {

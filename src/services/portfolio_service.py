@@ -486,7 +486,7 @@ class PortfolioService:
             account_rows = self.repo.list_accounts(include_inactive=False)
 
         accounts_payload: List[Dict[str, Any]] = []
-        aggregate_currency = "CNY"
+        aggregate_currency = self._resolve_snapshot_aggregate_currency(account_rows)
         aggregate = {
             "total_cash": 0.0,
             "total_market_value": 0.0,
@@ -1739,6 +1739,20 @@ class PortfolioService:
         if method not in VALID_COST_METHODS:
             raise ValueError("cost_method must be fifo or avg")
         return method
+
+    def _resolve_snapshot_aggregate_currency(self, account_rows: List[Any]) -> str:
+        """Pick snapshot rollup currency.
+
+        Single-account (or multi-account with one shared base currency) keeps that
+        base currency so totals match position valuation. Mixed bases fall back to CNY.
+        """
+        currencies = {
+            self._normalize_currency(getattr(account, "base_currency", None) or "CNY")
+            for account in account_rows
+        }
+        if len(currencies) == 1:
+            return next(iter(currencies))
+        return "CNY"
 
     @staticmethod
     def _default_currency_for_market(market: str) -> str:
