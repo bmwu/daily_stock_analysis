@@ -136,7 +136,6 @@ export const AlertRuleList: React.FC<AlertRuleListProps> = ({
   return (
     <Card
       title={text.title}
-      subtitle={formatUiText(text.subtitle, { total })}
       variant="bordered"
       padding="md"
       className={className}
@@ -257,12 +256,17 @@ export const AlertRuleList: React.FC<AlertRuleListProps> = ({
         </div>
       )}
 
-      <Pagination
-        currentPage={page}
-        totalPages={totalPages}
-        onPageChange={onPageChange}
-        className="mt-5"
-      />
+      <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm text-secondary-text">
+          {formatUiText(text.subtitle, { total })}
+        </p>
+        <Pagination
+          currentPage={page}
+          totalPages={totalPages}
+          onPageChange={onPageChange}
+          className="justify-end"
+        />
+      </div>
 
       <ConfirmDialog
         isOpen={pendingDelete != null}

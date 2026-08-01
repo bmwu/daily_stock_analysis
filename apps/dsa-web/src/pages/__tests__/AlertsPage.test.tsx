@@ -107,7 +107,7 @@ function createDeferred<T>() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  listRules.mockResolvedValue({ items: [rule], total: 1, page: 1, pageSize: 20 });
+  listRules.mockResolvedValue({ items: [rule], total: 1, page: 1, pageSize: 10 });
   listTriggers.mockResolvedValue({
     items: [
       {
@@ -158,7 +158,7 @@ describe('AlertsPage', () => {
       enabled: undefined,
       alertType: undefined,
       page: 1,
-      pageSize: 20,
+      pageSize: 10,
     });
     expect(listTriggers).toHaveBeenCalledWith({ page: 1, pageSize: 20 });
     expect(listNotifications).toHaveBeenCalledWith({ page: 1, pageSize: 20 });
@@ -276,10 +276,10 @@ describe('AlertsPage', () => {
   it('clamps rules pagination when a mutation leaves the current page empty', async () => {
     const page2Rule = { ...rule, id: 2, name: '第二页规则', target: 'AAPL' };
     listRules
-      .mockResolvedValueOnce({ items: [rule], total: 21, page: 1, pageSize: 20 })
-      .mockResolvedValueOnce({ items: [page2Rule], total: 21, page: 2, pageSize: 20 })
-      .mockResolvedValueOnce({ items: [], total: 20, page: 2, pageSize: 20 })
-      .mockResolvedValue({ items: [rule], total: 20, page: 1, pageSize: 20 });
+      .mockResolvedValueOnce({ items: [rule], total: 11, page: 1, pageSize: 10 })
+      .mockResolvedValueOnce({ items: [page2Rule], total: 11, page: 2, pageSize: 10 })
+      .mockResolvedValueOnce({ items: [], total: 10, page: 2, pageSize: 10 })
+      .mockResolvedValue({ items: [rule], total: 10, page: 1, pageSize: 10 });
 
     render(
       <MemoryRouter>
@@ -299,7 +299,7 @@ describe('AlertsPage', () => {
         enabled: undefined,
         alertType: undefined,
         page: 1,
-        pageSize: 20,
+        pageSize: 10,
       });
     });
     expect(await screen.findByText('茅台价格突破')).toBeInTheDocument();
@@ -324,10 +324,10 @@ describe('AlertsPage', () => {
     fireEvent.change(screen.getByLabelText('启停状态'), { target: { value: 'disabled' } });
     await waitFor(() => expect(listRules).toHaveBeenCalledTimes(2));
 
-    filteredRequest.resolve({ items: [filteredRule], total: 1, page: 1, pageSize: 20 });
+    filteredRequest.resolve({ items: [filteredRule], total: 1, page: 1, pageSize: 10 });
     expect(await screen.findByText('停用规则')).toBeInTheDocument();
 
-    initialRequest.resolve({ items: [staleRule], total: 1, page: 1, pageSize: 20 });
+    initialRequest.resolve({ items: [staleRule], total: 1, page: 1, pageSize: 10 });
     await waitFor(() => expect(screen.queryByText('旧筛选规则')).not.toBeInTheDocument());
     expect(screen.getByText('停用规则')).toBeInTheDocument();
   });
