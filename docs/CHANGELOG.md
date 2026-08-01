@@ -8,9 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [改进] 告警中心改为「告警规则 / 触发历史 / 通知尝试记录」三 Tab；Tab 内容区不再重复同名卡片标题。
 - [改进] 告警规则列表底部左侧显示总数、右侧分页器，去掉卡片标题旁的 total。
 - [改进] 告警规则列表默认分页改为每页 10 条。
-- [改进] 告警中心改为「告警规则 / 触发历史」双 Tab；创建规则移至顶部按钮并以可拖拽宽度抽屉打开。
+- [改进] 告警中心创建规则移至顶部按钮并以可拖拽宽度抽屉打开。
 - [改进] 告警中心内容区取消 `max-w-7xl` 限制，与持仓页同宽铺满 Shell 主栏。
 - [修复] 实时大盘自选保留非 A 股代码（如 BABA）占位展示；AI 建议/回测/告警单标的提供「从自选选择」下拉，告警 watchlist 范围展示整份自选并可点选切到单标的。
 - [改进] 明确 `STOCK_LIST` 与首页自选为同一真源；AI 建议 / 回测 / 告警单标的输入框支持从自选（及可选近期/热门/持仓）快捷选择，仍可手输任意代码。

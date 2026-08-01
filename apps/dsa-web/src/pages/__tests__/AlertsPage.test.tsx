@@ -151,9 +151,11 @@ describe('AlertsPage', () => {
 
     expect(screen.getByText('管理事件告警、日线技术指标、自选股、持仓/账户联动和大盘红绿灯规则，执行一次性测试，并查看后台评估任务记录的触发历史。')).toBeInTheDocument();
     expect(await screen.findByText('茅台价格突破')).toBeInTheDocument();
-    expect(await screen.findByText('暂无通知尝试记录')).toBeInTheDocument();
+    expect(screen.queryByText('暂无通知尝试记录')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('tab', { name: '触发历史' }));
     expect(await screen.findByText('600519 price above 1800')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: '通知尝试记录' }));
+    expect(await screen.findByText('暂无通知尝试记录')).toBeInTheDocument();
     expect(listRules).toHaveBeenCalledWith({
       enabled: undefined,
       alertType: undefined,
@@ -332,7 +334,7 @@ describe('AlertsPage', () => {
     expect(screen.getByText('停用规则')).toBeInTheDocument();
   });
 
-  it('switches between rules and triggers tabs', async () => {
+  it('switches between rules, triggers, and notifications tabs', async () => {
     render(
       <MemoryRouter>
         <AlertsPage />
@@ -343,6 +345,8 @@ describe('AlertsPage', () => {
     expect(screen.queryByText('600519 price above 1800')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('tab', { name: '触发历史' }));
     expect(await screen.findByText('600519 price above 1800')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: '通知尝试记录' }));
+    expect(await screen.findByText('暂无通知尝试记录')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('tab', { name: '告警规则' }));
     expect(await screen.findByText('茅台价格突破')).toBeInTheDocument();
   });

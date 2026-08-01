@@ -49,7 +49,7 @@ interface AlertTriggerHistoryProps {
 
 export const AlertTriggerHistory: React.FC<AlertTriggerHistoryProps> = ({ triggers, isLoading = false }) => {
   return (
-    <Card title="触发历史" subtitle="评估记录" variant="bordered" padding="md">
+    <Card variant="bordered" padding="md">
       {isLoading ? <Loading label="正在加载触发历史" /> : null}
       {!isLoading && triggers.length === 0 ? (
         <EmptyState

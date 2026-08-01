@@ -198,7 +198,6 @@ describe('AlertRuleList', () => {
       ],
     });
 
-    expect(screen.getByText('Alert rules')).toBeInTheDocument();
     expect(screen.getByRole('option', { name: 'All statuses' })).toBeInTheDocument();
     expect(screen.getAllByText('Portfolio drawdown').length).toBeGreaterThan(0);
     expect(screen.getByText('Portfolio account')).toBeInTheDocument();
