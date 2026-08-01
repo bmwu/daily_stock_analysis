@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import AlertsPage from '../AlertsPage';
@@ -151,8 +151,9 @@ describe('AlertsPage', () => {
 
     expect(screen.getByText('管理事件告警、日线技术指标、自选股、持仓/账户联动和大盘红绿灯规则，执行一次性测试，并查看后台评估任务记录的触发历史。')).toBeInTheDocument();
     expect(await screen.findByText('茅台价格突破')).toBeInTheDocument();
-    expect(await screen.findByText('600519 price above 1800')).toBeInTheDocument();
     expect(await screen.findByText('暂无通知尝试记录')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: '触发历史' }));
+    expect(await screen.findByText('600519 price above 1800')).toBeInTheDocument();
     expect(listRules).toHaveBeenCalledWith({
       enabled: undefined,
       alertType: undefined,
@@ -234,9 +235,11 @@ describe('AlertsPage', () => {
     );
 
     await screen.findByText('茅台价格突破');
-    fireEvent.change(screen.getByLabelText('标的代码'), { target: { value: 'aapl' } });
-    fireEvent.change(screen.getByLabelText('价格阈值'), { target: { value: '200' } });
     fireEvent.click(screen.getByRole('button', { name: '创建规则' }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText('标的代码'), { target: { value: 'aapl' } });
+    fireEvent.change(within(dialog).getByLabelText('价格阈值'), { target: { value: '200' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: '创建规则' }));
 
     await waitFor(() => {
       expect(createRule).toHaveBeenCalledWith(expect.objectContaining({
@@ -246,6 +249,7 @@ describe('AlertsPage', () => {
       }));
     });
     expect(await screen.findByText(/已创建告警规则/)).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
   it('keeps create form values when create API fails', async () => {
@@ -257,13 +261,16 @@ describe('AlertsPage', () => {
     );
 
     await screen.findByText('茅台价格突破');
-    fireEvent.change(screen.getByLabelText('标的代码'), { target: { value: 'aapl' } });
-    fireEvent.change(screen.getByLabelText('价格阈值'), { target: { value: '200' } });
     fireEvent.click(screen.getByRole('button', { name: '创建规则' }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText('标的代码'), { target: { value: 'aapl' } });
+    fireEvent.change(within(dialog).getByLabelText('价格阈值'), { target: { value: '200' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: '创建规则' }));
 
-    expect(await screen.findByText('加载失败')).toBeInTheDocument();
-    expect(screen.getByLabelText('标的代码')).toHaveValue('aapl');
-    expect(screen.getByLabelText('价格阈值')).toHaveValue(200);
+    expect(await within(dialog).findByText('加载失败')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('标的代码')).toHaveValue('aapl');
+    expect(within(dialog).getByLabelText('价格阈值')).toHaveValue(200);
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 
   it('clamps rules pagination when a mutation leaves the current page empty', async () => {
@@ -323,6 +330,21 @@ describe('AlertsPage', () => {
     initialRequest.resolve({ items: [staleRule], total: 1, page: 1, pageSize: 20 });
     await waitFor(() => expect(screen.queryByText('旧筛选规则')).not.toBeInTheDocument());
     expect(screen.getByText('停用规则')).toBeInTheDocument();
+  });
+
+  it('switches between rules and triggers tabs', async () => {
+    render(
+      <MemoryRouter>
+        <AlertsPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('茅台价格突破')).toBeInTheDocument();
+    expect(screen.queryByText('600519 price above 1800')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: '触发历史' }));
+    expect(await screen.findByText('600519 price above 1800')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: '告警规则' }));
+    expect(await screen.findByText('茅台价格突破')).toBeInTheDocument();
   });
 
   it('renders API errors through ApiErrorAlert', async () => {
