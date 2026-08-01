@@ -267,6 +267,16 @@ function makeDecisionSignal(overrides: Partial<DecisionSignalItem> = {}): Decisi
   };
 }
 
+async function revealPortfolioSignalDetail(detailText: string, container?: HTMLElement) {
+  const scope = container ? within(container) : screen;
+  const summary = await scope.findByTestId('portfolio-signal-summary');
+  const trigger = summary.parentElement;
+  expect(trigger).not.toBeNull();
+  fireEvent.mouseEnter(trigger as HTMLElement);
+  expect(await screen.findByRole('tooltip')).toHaveTextContent(detailText);
+  return trigger as HTMLElement;
+}
+
 function deferredPromise<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason?: unknown) => void;
@@ -593,7 +603,8 @@ describe('PortfolioPage FX refresh', () => {
     render(<PortfolioPage />);
 
     expect(await screen.findByText('600519')).toBeInTheDocument();
-    expect(await screen.findByText('分页后的风险摘要')).toBeInTheDocument();
+    expect(screen.queryByText('分页后的风险摘要')).not.toBeInTheDocument();
+    await revealPortfolioSignalDetail('分页后的风险摘要');
     expect(decisionSignalsApi.getLatest).toHaveBeenCalledWith('600519', {
       market: 'cn',
       limit: 1,
@@ -620,12 +631,13 @@ describe('PortfolioPage FX refresh', () => {
 
     render(<PortfolioPage />);
 
-    expect(await screen.findByText('旧 AI 风险')).toBeInTheDocument();
+    const trigger = await revealPortfolioSignalDetail('旧 AI 风险');
+    fireEvent.mouseLeave(trigger);
     fireEvent.click(screen.getByRole('button', { name: '刷新数据' }));
 
-    expect(await screen.findByText('新 AI 风险')).toBeInTheDocument();
     await waitFor(() => expect(getLatestDecisionSignals).toHaveBeenCalledTimes(2));
     expect(screen.queryByText('旧 AI 风险')).not.toBeInTheDocument();
+    await revealPortfolioSignalDetail('新 AI 风险');
   });
 
   it('waits for the selected-account snapshot before loading account-scoped holding signals', async () => {
@@ -651,7 +663,7 @@ describe('PortfolioPage FX refresh', () => {
 
     render(<PortfolioPage />);
 
-    expect(await screen.findByText('账号信号')).toBeInTheDocument();
+    await revealPortfolioSignalDetail('账号信号');
     const signalCallsBeforeSwitch = getLatestDecisionSignals.mock.calls.length;
 
     const accountSelect = screen.getAllByRole('combobox')[0];
@@ -660,7 +672,7 @@ describe('PortfolioPage FX refresh', () => {
     await waitFor(() => {
       expect(getSnapshot).toHaveBeenLastCalledWith({ accountId: 2, costMethod: 'fifo', includeRealtime: false });
     });
-    expect(screen.queryByText('账号信号')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('portfolio-signal-summary')).not.toBeInTheDocument();
     expect(getLatestDecisionSignals).toHaveBeenCalledTimes(signalCallsBeforeSwitch);
 
     await act(async () => {
@@ -721,7 +733,7 @@ describe('PortfolioPage FX refresh', () => {
     const accountSelect = screen.getAllByRole('combobox')[0];
     fireEvent.change(accountSelect, { target: { value: '2' } });
 
-    expect(await screen.findByText('新账号信号')).toBeInTheDocument();
+    await revealPortfolioSignalDetail('新账号信号');
 
     await act(async () => {
       oldSignals.resolve({
@@ -733,7 +745,7 @@ describe('PortfolioPage FX refresh', () => {
       await oldSignals.promise;
     });
 
-    expect(screen.getByText('新账号信号')).toBeInTheDocument();
+    await revealPortfolioSignalDetail('新账号信号');
     expect(screen.queryByText('旧账号晚返回信号')).not.toBeInTheDocument();
   });
 
@@ -766,8 +778,16 @@ describe('PortfolioPage FX refresh', () => {
 
     render(<PortfolioPage />);
 
-    expect(await screen.findAllByText('A 股风险')).toHaveLength(2);
-    expect(screen.getByText('港股风险')).toBeInTheDocument();
+    expect(await screen.findAllByTestId('portfolio-signal-summary')).toHaveLength(3);
+    const cnRows = screen.getAllByText(/600519|SH600519/).map((node) => node.closest('tr')).filter(Boolean) as HTMLElement[];
+    expect(cnRows).toHaveLength(2);
+    for (const row of cnRows) {
+      await revealPortfolioSignalDetail('A 股风险', row);
+      fireEvent.mouseLeave(within(row).getByTestId('portfolio-signal-summary').parentElement as HTMLElement);
+    }
+    const hkRow = screen.getByText('00700.HK').closest('tr');
+    expect(hkRow).not.toBeNull();
+    await revealPortfolioSignalDetail('港股风险', hkRow as HTMLElement);
     const latestLookupSymbols = getLatestDecisionSignals.mock.calls.map(([stockCode]) => String(stockCode));
     expect(latestLookupSymbols.filter((stockCode) => stockCode.includes('600519'))).toEqual(['600519']);
     expect(getLatestDecisionSignals).toHaveBeenCalledTimes(3);
@@ -796,7 +816,7 @@ describe('PortfolioPage FX refresh', () => {
 
     render(<PortfolioPage />);
 
-    expect(await screen.findByText('已加载风险')).toBeInTheDocument();
+    await revealPortfolioSignalDetail('已加载风险');
     expect(await screen.findByText('AI 建议降级')).toBeInTheDocument();
     expect(screen.getByText(/latest AAPL failed/)).toBeInTheDocument();
   });
@@ -815,7 +835,13 @@ describe('PortfolioPage FX refresh', () => {
 
     render(<PortfolioPage />);
 
-    expect(await screen.findAllByText('唯一 latest 风险')).toHaveLength(2);
+    expect(await screen.findAllByTestId('portfolio-signal-summary')).toHaveLength(2);
+    for (const summary of screen.getAllByTestId('portfolio-signal-summary')) {
+      const row = summary.closest('tr');
+      expect(row).not.toBeNull();
+      await revealPortfolioSignalDetail('唯一 latest 风险', row as HTMLElement);
+      fireEvent.mouseLeave(summary.parentElement as HTMLElement);
+    }
     expect(getLatestDecisionSignals).toHaveBeenCalledTimes(1);
     expect(decisionSignalsApi.list).not.toHaveBeenCalled();
   });

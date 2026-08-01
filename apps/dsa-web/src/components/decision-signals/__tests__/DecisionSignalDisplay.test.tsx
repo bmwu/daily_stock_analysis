@@ -235,4 +235,34 @@ describe('DecisionSignalDetails', () => {
     expect(screen.getByText('10 days')).toBeInTheDocument();
     expect(screen.queryByText('10d')).not.toBeInTheDocument();
   });
+
+  it('keeps portfolio risk and watch details in a hover tooltip', async () => {
+    render(
+      <UiLanguageProvider>
+        <PortfolioSignalSummary
+          item={{
+            ...signal,
+            riskSummary: '["若股价继续冲高则严禁追高","放量上涨后短期存在回吐风险"]',
+            watchConditions: '["观察缩量回踩MA5","确认资金面后再考虑"]',
+          }}
+        />
+      </UiLanguageProvider>,
+    );
+
+    expect(screen.queryByText('若股价继续冲高则严禁追高')).not.toBeInTheDocument();
+    expect(screen.queryByText('观察缩量回踩MA5')).not.toBeInTheDocument();
+
+    const summary = screen.getByTestId('portfolio-signal-summary');
+    fireEvent.mouseEnter(summary.parentElement as HTMLElement);
+
+    const tooltip = await screen.findByRole('tooltip');
+    expect(tooltip).toHaveTextContent('若股价继续冲高则严禁追高');
+    expect(tooltip).toHaveTextContent('放量上涨后短期存在回吐风险');
+    expect(tooltip).toHaveTextContent('观察缩量回踩MA5');
+    expect(tooltip).toHaveTextContent('确认资金面后再考虑');
+
+    fireEvent.mouseLeave(summary.parentElement as HTMLElement);
+    fireEvent.mouseEnter(tooltip);
+    expect(screen.getByRole('tooltip')).toBeInTheDocument();
+  });
 });

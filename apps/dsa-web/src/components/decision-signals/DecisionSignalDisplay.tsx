@@ -1,6 +1,6 @@
 import type React from 'react';
 import { PanelRightOpen } from 'lucide-react';
-import { Badge, Card, JsonViewer } from '../common';
+import { Badge, Card, JsonViewer, Tooltip } from '../common';
 import { useUiLanguage } from '../../contexts/UiLanguageContext';
 import type { UiLanguage, UiTextKey } from '../../i18n/uiText';
 import type {
@@ -112,6 +112,32 @@ function formatJsonish(value: unknown): string | null {
   } catch {
     return String(value);
   }
+}
+
+function formatSignalDetailLines(value: unknown): string[] {
+  if (value === null || value === undefined) return [];
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => String(item ?? '').trim())
+      .filter(Boolean);
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return [];
+    if (trimmed.startsWith('[')) {
+      try {
+        const parsed = JSON.parse(trimmed) as unknown;
+        if (Array.isArray(parsed)) {
+          return formatSignalDetailLines(parsed);
+        }
+      } catch {
+        // Keep the raw string when it is not valid JSON.
+      }
+    }
+    return [trimmed];
+  }
+  const text = formatJsonish(value);
+  return text ? [text] : [];
 }
 
 function asJsonViewerData(value: unknown): Record<string, unknown> | unknown[] | null {
@@ -489,20 +515,62 @@ type PortfolioSignalSummaryProps = {
 export const PortfolioSignalSummary: React.FC<PortfolioSignalSummaryProps> = ({ item, loading = false }) => {
   const { t } = useUiLanguage();
   if (loading && !item) {
-    return <span className="text-xs text-secondary-text">{t('decisionSignals.portfolioLoading')}</span>;
+    return <span className="inline-flex w-full justify-center text-xs text-secondary-text">{t('decisionSignals.portfolioLoading')}</span>;
   }
   if (!item) {
-    return <span className="text-xs text-muted-text">{t('decisionSignals.portfolioEmpty')}</span>;
+    return <span className="inline-flex w-full justify-center text-xs text-muted-text">{t('decisionSignals.portfolioEmpty')}</span>;
   }
   const actionLabel = getActionLabel(item, t);
-  return (
-    <div className="min-w-[11rem] max-w-[18rem] text-left">
-      <div className="flex flex-wrap items-center justify-end gap-1.5">
+  const riskLines = formatSignalDetailLines(item.riskSummary);
+  const watchLines = formatSignalDetailLines(item.watchConditions);
+  const hasDetails = riskLines.length > 0 || watchLines.length > 0;
+  const summary = (
+    <div className="min-w-[7.5rem] text-center" data-testid="portfolio-signal-summary">
+      <div className="flex flex-wrap items-center justify-center gap-1.5">
         <Badge variant={getActionVariant(item)}>{actionLabel}</Badge>
         {item.horizon ? <span className="text-[11px] text-secondary-text">{getDecisionSignalHorizonLabel(item.horizon, t)}</span> : null}
       </div>
-      {item.riskSummary ? <p className="mt-1 line-clamp-2 text-[11px] text-warning">{item.riskSummary}</p> : null}
-      {item.watchConditions ? <p className="mt-1 line-clamp-2 text-[11px] text-secondary-text">{item.watchConditions}</p> : null}
     </div>
+  );
+
+  if (!hasDetails) {
+    return summary;
+  }
+
+  return (
+    <Tooltip
+      side="bottom"
+      focusable
+      interactive
+      closeDelayMs={1000}
+      className="w-full justify-center"
+      contentClassName="min-w-[16rem] max-w-[min(28rem,calc(100vw-24px))] whitespace-normal"
+      content={(
+        <div className="space-y-2 text-left">
+          {riskLines.length > 0 ? (
+            <div>
+              <p className="font-semibold text-warning">{t('decisionSignals.riskSummary')}</p>
+              <ul className="mt-1 list-disc space-y-1 pl-4 text-[11px] leading-5 text-foreground">
+                {riskLines.map((line, index) => (
+                  <li key={`risk-${index}`}>{line}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          {watchLines.length > 0 ? (
+            <div>
+              <p className="font-semibold text-secondary-text">{t('decisionSignals.watchConditions')}</p>
+              <ul className="mt-1 list-disc space-y-1 pl-4 text-[11px] leading-5 text-foreground">
+                {watchLines.map((line, index) => (
+                  <li key={`watch-${index}`}>{line}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </div>
+      )}
+    >
+      {summary}
+    </Tooltip>
   );
 };
