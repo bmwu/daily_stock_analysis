@@ -36,7 +36,7 @@ import { cn } from '../utils/cn';
 const RULES_PAGE_SIZE = 10;
 const HISTORY_PAGE_SIZE = 20;
 
-type AlertsMainTab = 'rules' | 'triggers';
+type AlertsMainTab = 'rules' | 'triggers' | 'notifications';
 
 function enabledFilterToQuery(value: AlertRuleEnabledFilter): boolean | undefined {
   if (value === 'enabled') return true;
@@ -343,6 +343,20 @@ const AlertsPage: React.FC = () => {
           >
             触发历史
           </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mainTab === 'notifications'}
+            className={cn(
+              'rounded-lg px-4 py-2 text-sm transition-colors',
+              mainTab === 'notifications'
+                ? 'bg-card text-foreground shadow-sm'
+                : 'text-secondary-text hover:text-foreground',
+            )}
+            onClick={() => setMainTab('notifications')}
+          >
+            通知尝试记录
+          </button>
         </div>
 
         {mainTab === 'rules' ? (
@@ -377,11 +391,24 @@ const AlertsPage: React.FC = () => {
                 message={renderTestResultMessage(testResult)}
               />
             ) : null}
+          </div>
+        ) : null}
 
+        {mainTab === 'triggers' ? (
+          <div className="space-y-4" role="tabpanel" aria-label="触发历史">
+            {triggersError ? (
+              <ApiErrorAlert error={triggersError} onDismiss={() => setTriggersError(null)} />
+            ) : null}
+            <AlertTriggerHistory triggers={triggers} isLoading={triggersLoading} />
+          </div>
+        ) : null}
+
+        {mainTab === 'notifications' ? (
+          <div className="space-y-4" role="tabpanel" aria-label="通知尝试记录">
             {notificationsError ? (
               <ApiErrorAlert error={notificationsError} onDismiss={() => setNotificationsError(null)} />
             ) : null}
-            <Card title="通知尝试记录" subtitle="通知结果" variant="bordered" padding="md">
+            <Card variant="bordered" padding="md">
               {notificationsLoading ? <Loading label="正在加载通知尝试记录" /> : null}
               {!notificationsLoading && notifications.length === 0 ? (
                 <EmptyState
@@ -422,14 +449,7 @@ const AlertsPage: React.FC = () => {
               ) : null}
             </Card>
           </div>
-        ) : (
-          <div className="space-y-4" role="tabpanel" aria-label="触发历史">
-            {triggersError ? (
-              <ApiErrorAlert error={triggersError} onDismiss={() => setTriggersError(null)} />
-            ) : null}
-            <AlertTriggerHistory triggers={triggers} isLoading={triggersLoading} />
-          </div>
-        )}
+        ) : null}
       </div>
 
       <Drawer

@@ -135,7 +135,6 @@ export const AlertRuleList: React.FC<AlertRuleListProps> = ({
 
   return (
     <Card
-      title={text.title}
       variant="bordered"
       padding="md"
       className={className}
