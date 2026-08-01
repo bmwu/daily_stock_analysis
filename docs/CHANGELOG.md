@@ -8,7 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [改进] 选股页取消 `max-w-6xl` 限制，与持仓页同宽铺满 Shell 主栏。
 - [改进] 首页右侧内容区取消 `max-w-6xl` / `max-w-4xl` 限制，与持仓页同宽铺满 Shell 主栏。
+- [修复] Agent / 大盘用量落库：`model` 不再用裸 provider（如 `openai`）顶替；Agent 写入 `usage.provider`，大盘 `generate_text` 走 audit 路径写入 provider；Agent 单测默认使用内存库避免污染本地 `stock_analysis.db`。
 - [改进] 告警规则列表支持按已有规则目标下拉筛选。
 - [改进] 告警触发历史加宽状态/观察值/阈值/数据时间列，并对质量、限制、数据源与常见原因做中文展示。
 - [改进] 告警中心改为「告警规则 / 触发历史 / 通知尝试记录」三 Tab；Tab 内容区不再重复同名卡片标题。
