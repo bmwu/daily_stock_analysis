@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   DEFAULT_FAVORITE_INDEX_CODES,
   loadFavoriteIndexCodes,
+  orderFavoriteCodesByCatalog,
   saveFavoriteIndexCodes,
   toggleFavoriteIndexCode,
 } from '../marketRadarIndexFavorites';
@@ -26,5 +27,14 @@ describe('marketRadarIndexFavorites', () => {
 
   it('falls back to defaults when favorites would become empty', () => {
     expect(toggleFavoriteIndexCode(['000001'], '000001')).toEqual([...DEFAULT_FAVORITE_INDEX_CODES]);
+  });
+
+  it('orders favorites by catalog sequence instead of toggle order', () => {
+    const catalog = ['000001', '399001', '399006', 'HSI', 'SPX', 'N225'];
+    expect(orderFavoriteCodesByCatalog(['SPX', '000001', 'HSI'], catalog)).toEqual([
+      '000001',
+      'HSI',
+      'SPX',
+    ]);
   });
 });

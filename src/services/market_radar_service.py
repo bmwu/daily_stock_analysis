@@ -5,13 +5,14 @@ from __future__ import annotations
 
 import logging
 import random
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 
 import requests
 
 from data_provider import DataFetcherManager
-from data_provider.akshare_fetcher import USER_AGENTS
+from data_provider.akshare_fetcher import USER_AGENTS, _parse_tencent_amount
 from data_provider.base import normalize_stock_code
 from src.services.stock_list_parser import split_stock_list
 from src.services.trading_signal_monitor import (
@@ -81,6 +82,19 @@ def _index_code_aliases(code: str) -> set[str]:
     return aliases
 
 
+def _coerce_index_amount(value: Any) -> Optional[float]:
+    """Index amount for display; treat missing/non-positive as unavailable."""
+    if value is None:
+        return None
+    try:
+        amount = float(value)
+    except (TypeError, ValueError):
+        return None
+    if amount != amount or amount <= 0:  # NaN or non-positive
+        return None
+    return amount
+
+
 def _normalize_index_quote(
     *,
     code: str,
@@ -106,8 +120,19 @@ def _normalize_index_quote(
         "change": payload.get("change")
         if payload.get("change") is not None
         else payload.get("change_amount"),
-        "amount": payload.get("amount"),
+        "amount": _coerce_index_amount(payload.get("amount")),
     }
+
+
+def _merge_index_quote(existing: Dict[str, Any], incoming: Dict[str, Any]) -> Dict[str, Any]:
+    """Prefer existing filled fields; fill gaps (esp. amount) from incoming."""
+    merged = dict(existing)
+    for key in ("name", "price", "change_pct", "change", "amount"):
+        if merged.get(key) is None and incoming.get(key) is not None:
+            merged[key] = incoming[key]
+        elif key == "name" and incoming.get("name") and merged.get("name") in (None, "", merged.get("code")):
+            merged[key] = incoming["name"]
+    return merged
 
 
 def _now_iso() -> str:
@@ -165,7 +190,7 @@ class MarketRadarService:
 
     def build_overview(self) -> Dict[str, Any]:
         errors: List[Dict[str, str]] = []
-        indices = self._load_indices(errors)
+        index_errors: List[Dict[str, str]] = []
         portfolio_by_code, account = self._load_portfolio(errors)
         watchlist_codes = self._load_watchlist(errors)
 
@@ -189,11 +214,20 @@ class MarketRadarService:
 
         # Quotes + bars for the full holdings/watchlist universe (all markets).
         union_codes = list(dict.fromkeys([*holding_codes, *watch_codes]))
-        payload = self.monitor.compute_for_codes(
-            union_codes,
-            portfolio_by_code=portfolio_by_code,
-            include_bars=True,
-        )
+
+        # Indices and stock universe in parallel — indices must not serialize behind bars.
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            fut_indices = pool.submit(self._load_indices, index_errors)
+            fut_quotes = pool.submit(
+                self.monitor.compute_for_codes,
+                union_codes,
+                portfolio_by_code=portfolio_by_code,
+                include_bars=True,
+            )
+            indices = fut_indices.result()
+            payload = fut_quotes.result()
+
+        errors.extend(index_errors)
         by_code = {
             str(item.get("code")): item
             for item in (payload.get("items") or [])
@@ -429,44 +463,80 @@ class MarketRadarService:
                         code=meta["code"],
                         name=fields[1] or meta["name"],
                         region="cn",
-                        row={"price": price, "change_pct": change_pct, "change": change},
+                        row={
+                            "price": price,
+                            "change_pct": change_pct,
+                            "change": change,
+                            "amount": _parse_tencent_amount(fields),
+                        },
                     )
             except Exception as exc:
                 local_errors.append({"code": "indices", "error": f"tencent_indices:{type(exc).__name__}"})
 
-        # 2) Fill missing CN + non-CN via DataFetcherManager.get_main_indices.
+        # 2) Fill missing codes via get_main_indices (parallel by region).
+        # Do NOT re-fetch a region only to backfill amount — that made CN/overseas
+        # yfinance/efinance serialize and blow the Web 30s client timeout.
         regions = sorted({item["region"] for item in INDEX_CATALOG})
-        for region in regions:
-            catalog_in_region = [item for item in INDEX_CATALOG if item["region"] == region]
-            if all(item["code"] in by_code for item in catalog_in_region):
-                continue
+        regions_needed = [
+            region
+            for region in regions
+            if any(
+                item["code"] not in by_code
+                for item in INDEX_CATALOG
+                if item["region"] == region
+            )
+        ]
+
+        def _fetch_region(region: str):
             try:
-                rows = self.data_manager.get_main_indices(region=region) or []
-            except Exception as exc:
-                local_errors.append({"code": f"indices_{region}", "error": f"main_indices:{type(exc).__name__}"})
-                continue
-            for row in rows:
-                if not isinstance(row, dict):
-                    continue
-                raw_code = str(row.get("code") or row.get("symbol") or "").strip()
-                aliases = _index_code_aliases(raw_code)
-                matched = next(
-                    (
-                        item
-                        for item in catalog_in_region
-                        if item["code"] not in by_code
-                        and (item["code"] in aliases or bool(aliases & _index_code_aliases(item["code"])))
-                    ),
-                    None,
-                )
-                if not matched:
-                    continue
-                by_code[matched["code"]] = _normalize_index_quote(
-                    code=matched["code"],
-                    name=matched["name"],
-                    region=matched["region"],
-                    row=row,
-                )
+                return region, self.data_manager.get_main_indices(region=region) or [], None
+            except Exception as exc:  # noqa: BLE001 — region fail-open
+                return region, [], exc
+
+        if regions_needed:
+            workers = min(6, len(regions_needed))
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = [pool.submit(_fetch_region, region) for region in regions_needed]
+                try:
+                    for fut in as_completed(futures, timeout=12.0):
+                        region, rows, exc = fut.result()
+                        if exc is not None:
+                            local_errors.append(
+                                {"code": f"indices_{region}", "error": f"main_indices:{type(exc).__name__}"}
+                            )
+                            continue
+                        catalog_in_region = [item for item in INDEX_CATALOG if item["region"] == region]
+                        for row in rows:
+                            if not isinstance(row, dict):
+                                continue
+                            raw_code = str(row.get("code") or row.get("symbol") or "").strip()
+                            aliases = _index_code_aliases(raw_code)
+                            matched = next(
+                                (
+                                    item
+                                    for item in catalog_in_region
+                                    if item["code"] in aliases
+                                    or bool(aliases & _index_code_aliases(item["code"]))
+                                ),
+                                None,
+                            )
+                            if not matched:
+                                continue
+                            incoming = _normalize_index_quote(
+                                code=matched["code"],
+                                name=matched["name"],
+                                region=matched["region"],
+                                row=row,
+                            )
+                            existing = by_code.get(matched["code"])
+                            if existing is None:
+                                by_code[matched["code"]] = incoming
+                            else:
+                                by_code[matched["code"]] = _merge_index_quote(existing, incoming)
+                except TimeoutError:
+                    local_errors.append({"code": "indices", "error": "main_indices:TimeoutError"})
+                    for fut in futures:
+                        fut.cancel()
 
         # Preserve catalog order; include catalog entries even when quote is missing.
         results: List[Dict[str, Any]] = []

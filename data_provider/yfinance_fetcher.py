@@ -37,6 +37,51 @@ from .us_index_mapping import get_us_index_yf_symbol, is_us_stock_code
 from .yfinance_fundamental_adapter import _safe_float
 from src.services.market_symbol_utils import get_suffix_market, is_suffix_market_symbol
 
+
+def _prefer_yahoo_regular_market_fields(
+    *,
+    price: Optional[float],
+    prev_close: Optional[float],
+    change_amount: Optional[float],
+    change_pct: Optional[float],
+    amplitude: Optional[float],
+    high: Optional[float],
+    low: Optional[float],
+    ticker_info: Optional[Dict[str, Any]],
+) -> tuple:
+    """
+    Prefer Yahoo ``info`` regular-market fields over ``fast_info``.
+
+    ``fast_info.previousClose`` is occasionally wrong/stale for US equities
+    (e.g. BABA), while ``regularMarketPreviousClose`` / ``regularMarketChangePercent``
+    match the exchange quote.
+    """
+    info = ticker_info or {}
+    info_price = _safe_float(info.get("regularMarketPrice")) or _safe_float(info.get("currentPrice"))
+    info_prev = _safe_float(info.get("regularMarketPreviousClose")) or _safe_float(info.get("previousClose"))
+    info_change = _safe_float(info.get("regularMarketChange"))
+    info_change_pct = _safe_float(info.get("regularMarketChangePercent"))
+
+    if info_price is not None:
+        price = info_price
+    if info_prev is not None:
+        prev_close = info_prev
+
+    if info_change_pct is not None:
+        change_pct = info_change_pct
+    elif price is not None and prev_close is not None and prev_close > 0:
+        change_pct = (price - prev_close) / prev_close * 100
+
+    if info_change is not None:
+        change_amount = info_change
+    elif price is not None and prev_close is not None:
+        change_amount = price - prev_close
+
+    if high is not None and low is not None and prev_close is not None and prev_close > 0:
+        amplitude = ((high - low) / prev_close) * 100
+
+    return price, prev_close, change_amount, change_pct, amplitude
+
 # 可选导入本地股票映射补丁，若缺失则使用空字典兜底
 try:
     from src.data.stock_mapping import STOCK_NAME_MAP, is_meaningful_stock_name
@@ -331,6 +376,9 @@ class YfinanceFetcher(BaseFetcher):
         change_pct = (change / prev_close) * 100 if prev_close else 0
         high = float(today_row['High'])
         low = float(today_row['Low'])
+        volume = float(today_row['Volume']) if 'Volume' in today_row.index else 0.0
+        # Yahoo 不直接给指数成交额；有成交量时用 量×价 估算，否则保持不可用。
+        amount = (volume * price) if volume > 0 and price > 0 else None
         # 振幅 = (最高 - 最低) / 昨收 * 100
         amplitude = ((high - low) / prev_close * 100) if prev_close else 0
         return {
@@ -343,8 +391,8 @@ class YfinanceFetcher(BaseFetcher):
             'high': high,
             'low': low,
             'prev_close': prev_close,
-            'volume': float(today_row['Volume']),
-            'amount': 0.0,  # Yahoo Finance 不提供准确成交额
+            'volume': volume,
+            'amount': amount,
             'amplitude': amplitude,
         }
 
@@ -747,6 +795,16 @@ class YfinanceFetcher(BaseFetcher):
                 ticker_info = ticker.info or {}
             except Exception:
                 ticker_info = {}
+            price, prev_close, change_amount, change_pct, amplitude = _prefer_yahoo_regular_market_fields(
+                price=price,
+                prev_close=prev_close,
+                change_amount=change_amount,
+                change_pct=change_pct,
+                amplitude=amplitude,
+                high=high,
+                low=low,
+                ticker_info=ticker_info,
+            )
             missing_fields = [
                 field
                 for field, value in {
@@ -868,7 +926,7 @@ class YfinanceFetcher(BaseFetcher):
                 volume = int(today['Volume'])
                 market_cap = None
 
-            # 计算涨跌幅
+            # 计算涨跌幅（先用 fast_info/history；随后用 info 官方昨收校准）
             change_amount = None
             change_pct = None
             if price is not None and prev_close is not None and prev_close > 0:
@@ -885,6 +943,16 @@ class YfinanceFetcher(BaseFetcher):
                 ticker_info = ticker.info or {}
             except Exception:
                 ticker_info = {}
+            price, prev_close, change_amount, change_pct, amplitude = _prefer_yahoo_regular_market_fields(
+                price=price,
+                prev_close=prev_close,
+                change_amount=change_amount,
+                change_pct=change_pct,
+                amplitude=amplitude,
+                high=high,
+                low=low,
+                ticker_info=ticker_info,
+            )
             try:
                 info_name = ticker_info.get('shortName', '') or ticker_info.get('longName', '') or ''
                 name = info_name if is_meaningful_stock_name(info_name, symbol) else STOCK_NAME_MAP.get(symbol, '')

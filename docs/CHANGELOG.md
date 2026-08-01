@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [修复] Yahoo 美股涨跌幅优先用 `regularMarketPreviousClose` / `regularMarketChangePercent`，避免 `fast_info.previousClose` 偏差（如 BABA 3.16% vs 5.1%）。
+- [修复] 持仓管理顶栏：改用 Card；限制账户视图/成本口径宽度，操作按钮同一行靠右，避免宽屏挤压。
+- [修复] 首页盯盘 overview：指数分区并行拉取并设时限，与个股信号并行；超时不再整页空白，前端超时放宽至 60s。
+- [修复] 首页指数成交额：A 股腾讯行情解析成交额；港美等在有成交量时用 量×价估算，仍无数据则显示 —。
 - [改进] 首页改为实时大盘盯盘页；原分析工作台迁至「诊股」（`/analysis`，位于问股前）；`/market-radar` 兼容跳转首页。
 - [改进] 实时大盘持仓/自选改为全市场报价；日 K 走通用日线，非 A 股分时降级；无日线时保留报价并显示「信号暂不可用」。
 - [改进] 实时大盘「更多指数」改为顶栏按钮（紧随「刷新行情」），抽屉管理常用指数。

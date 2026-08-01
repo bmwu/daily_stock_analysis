@@ -69,12 +69,74 @@ def test_normalize_index_quote_prefers_price_fields():
         code="HSI",
         name="恒生指数",
         region="hk",
-        row={"current": 18000.5, "change_percent": 1.2, "change_amount": 10},
+        row={"current": 18000.5, "change_percent": 1.2, "change_amount": 10, "amount": 1.5e11},
     )
     assert row["price"] == 18000.5
     assert row["change_pct"] == 1.2
     assert row["change"] == 10
     assert row["region"] == "hk"
+    assert row["amount"] == 1.5e11
+
+
+def test_normalize_index_quote_drops_non_positive_amount():
+    from src.services.market_radar_service import _normalize_index_quote
+
+    row = _normalize_index_quote(
+        code="SPX",
+        name="标普500",
+        region="us",
+        row={"current": 5000, "amount": 0},
+    )
+    assert row["amount"] is None
+
+
+def test_load_indices_parses_tencent_amount_and_merges_overseas(monkeypatch):
+    from src.services.market_radar_service import INDEX_CATALOG, MarketRadarService
+
+    service = MarketRadarService.__new__(MarketRadarService)
+
+    cn = [item for item in INDEX_CATALOG if item["region"] == "cn" and item.get("tencent_symbol")][0]
+    symbol = cn["tencent_symbol"]
+    # Minimal Tencent quote line: field 3=price, 31=change, 32=pct, 35=price/vol/amount
+    fields = [""] * 38
+    fields[1] = cn["name"]
+    fields[3] = "3000.12"
+    fields[31] = "10"
+    fields[32] = "0.33"
+    fields[35] = "3000.12/100/1234567890"
+    payload = f'v_{symbol}="{"~".join(fields)}";'
+
+    class _Resp:
+        text = payload
+        encoding = "gbk"
+
+    monkeypatch.setattr(
+        "src.services.market_radar_service.requests.get",
+        lambda *args, **kwargs: _Resp(),
+    )
+
+    class _DataManager:
+        def get_main_indices(self, region="cn"):
+            if region == "hk":
+                return [{"code": "HSI", "name": "恒生指数", "current": 18000, "amount": 2.2e10}]
+            if region == "us":
+                return [{"code": "SPX", "current": 5000, "volume": 100, "amount": 5000 * 100}]
+            return []
+
+    service.data_manager = _DataManager()
+    # Bust cache
+    from src.services import market_radar_service as mrs
+
+    mrs._INDEX_QUOTE_CACHE["at"] = 0.0
+    mrs._INDEX_QUOTE_CACHE["rows"] = []
+
+    errors = []
+    rows = service._load_indices(errors)
+    by_code = {row["code"]: row for row in rows}
+    assert by_code[cn["code"]]["amount"] == 1234567890.0
+    assert by_code["HSI"]["amount"] == 2.2e10
+    assert by_code["SPX"]["amount"] == 500000.0
+
 
 
 def test_build_overview_quotes_non_ashare_watchlist(monkeypatch):

@@ -21,6 +21,7 @@ import type { MarketRadarInstrument, MarketRadarSignalLevel } from '../types/mar
 import { ruleText, splitRuleIds } from '../components/market-radar/ruleText';
 import {
   loadFavoriteIndexCodes,
+  orderFavoriteCodesByCatalog,
   toggleFavoriteIndexCode,
 } from '../utils/marketRadarIndexFavorites';
 import '../components/market-radar/marketRadar.css';
@@ -88,20 +89,6 @@ const MarketRadarPage: React.FC = () => {
     [data, portfolioTab],
   );
 
-  const favoriteIndices = useMemo(() => {
-    const byCode = new Map((data?.indices || []).map((item) => [item.code, item]));
-    const catalogByCode = new Map((data?.indexCatalog || []).map((item) => [item.code, item]));
-    return favoriteIndexCodes
-      .map((code) => {
-        const quoted = byCode.get(code);
-        if (quoted) return quoted;
-        const meta = catalogByCode.get(code);
-        if (!meta) return null;
-        return { code: meta.code, name: meta.name, region: meta.region };
-      })
-      .filter((item): item is NonNullable<typeof item> => item != null);
-  }, [data?.indexCatalog, data?.indices, favoriteIndexCodes]);
-
   const indexCatalog = useMemo(() => {
     if (data?.indexCatalog && data.indexCatalog.length > 0) {
       return data.indexCatalog;
@@ -112,6 +99,24 @@ const MarketRadarPage: React.FC = () => {
       region: item.region || 'cn',
     }));
   }, [data?.indexCatalog, data?.indices]);
+
+  // Main strip follows catalog/market order (same as drawer), not favorite-toggle order.
+  const favoriteIndices = useMemo(() => {
+    const byCode = new Map((data?.indices || []).map((item) => [item.code, item]));
+    const catalogByCode = new Map(indexCatalog.map((item) => [item.code, item]));
+    return orderFavoriteCodesByCatalog(
+      favoriteIndexCodes,
+      indexCatalog.map((item) => item.code),
+    )
+      .map((code) => {
+        const quoted = byCode.get(code);
+        if (quoted) return quoted;
+        const meta = catalogByCode.get(code);
+        if (!meta) return null;
+        return { code: meta.code, name: meta.name, region: meta.region };
+      })
+      .filter((item): item is NonNullable<typeof item> => item != null);
+  }, [data?.indices, favoriteIndexCodes, indexCatalog]);
 
   const handleToggleFavoriteIndex = (code: string) => {
     setFavoriteIndexCodes((prev) => toggleFavoriteIndexCode(prev, code));
@@ -205,20 +210,22 @@ const MarketRadarPage: React.FC = () => {
     const disabled =
       error.status === 503
       || /trading_signals_disabled|ENABLE_TRADING_SIGNALS/i.test(`${error.message || ''} ${error.rawMessage || ''}`);
-    return (
-      <div className="market-radar-root" data-theme={theme}>
-        <main className="shell">
-          <ApiErrorAlert error={error} />
-          {disabled ? (
+    // Only hard-block when the feature is disabled; timeouts/partial upstream failures
+    // should still render the shell so the home page remains usable.
+    if (disabled) {
+      return (
+        <div className="market-radar-root" data-theme={theme}>
+          <main className="shell">
+            <ApiErrorAlert error={error} />
             <InlineAlert
               variant="warning"
               message="请先在设置或 `.env` 中开启 ENABLE_TRADING_SIGNALS=true，然后刷新本页。"
             />
-          ) : null}
-          <button type="button" className="refresh-button" onClick={() => void refresh(true)}>重试</button>
-        </main>
-      </div>
-    );
+            <button type="button" className="refresh-button" onClick={() => void refresh(true)}>重试</button>
+          </main>
+        </div>
+      );
+    }
   }
 
   const account = data?.account;
@@ -281,7 +288,8 @@ const MarketRadarPage: React.FC = () => {
 
         {error ? (
           <div className="error-banner">
-            数据提醒：{error.message || '部分行情更新失败'}。页面保留最近一次成功数据，不据此作交易判断。
+            数据提醒：{error.message || '部分行情更新失败'}。
+            {!data ? '页面仍可操作，请点击右上角「刷新行情」重试。' : '页面保留最近一次成功数据，不据此作交易判断。'}
           </div>
         ) : null}
 
