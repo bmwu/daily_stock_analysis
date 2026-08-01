@@ -153,7 +153,7 @@ describe('AlertsPage', () => {
     expect(await screen.findByText('茅台价格突破')).toBeInTheDocument();
     expect(screen.queryByText('暂无通知尝试记录')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('tab', { name: '触发历史' }));
-    expect(await screen.findByText('600519 price above 1800')).toBeInTheDocument();
+    expect(await screen.findByText('600519 价格上破 1800')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('tab', { name: '通知尝试记录' }));
     expect(await screen.findByText('暂无通知尝试记录')).toBeInTheDocument();
     expect(listRules).toHaveBeenCalledWith({
@@ -342,9 +342,9 @@ describe('AlertsPage', () => {
     );
 
     expect(await screen.findByText('茅台价格突破')).toBeInTheDocument();
-    expect(screen.queryByText('600519 price above 1800')).not.toBeInTheDocument();
+    expect(screen.queryByText('600519 价格上破 1800')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('tab', { name: '触发历史' }));
-    expect(await screen.findByText('600519 price above 1800')).toBeInTheDocument();
+    expect(await screen.findByText('600519 价格上破 1800')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('tab', { name: '通知尝试记录' }));
     expect(await screen.findByText('暂无通知尝试记录')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('tab', { name: '告警规则' }));
