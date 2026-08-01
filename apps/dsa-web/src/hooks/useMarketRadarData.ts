@@ -7,6 +7,14 @@ import type { MarketRadarChart, MarketRadarOverview } from '../types/marketRadar
 const DEFAULT_POLL_MS = 30000;
 const chartCache = new Map<string, MarketRadarChart>();
 
+/** Stale kline payloads without dates (pre-fix US/HK bars) must not stick in memory. */
+function isUsableChartCache(chart: MarketRadarChart | undefined): chart is MarketRadarChart {
+  if (!chart) return false;
+  const candles = chart.candles || [];
+  if (candles.length === 0) return true;
+  return candles.some((candle) => Boolean(candle.date && String(candle.date).trim()));
+}
+
 export function useMarketRadarOverview(pollMs: number = DEFAULT_POLL_MS) {
   const [data, setData] = useState<MarketRadarOverview | null>(null);
   const [loading, setLoading] = useState(true);
@@ -64,16 +72,18 @@ export function useMarketRadarChart(code: string | null) {
     }
 
     const cached = chartCache.get(code);
-    if (cached) {
+    if (isUsableChartCache(cached)) {
       setData(cached);
       setError(null);
+    } else if (cached) {
+      chartCache.delete(code);
     }
 
     const requestId = ++requestIdRef.current;
     let active = true;
 
     async function load(showSpinner: boolean) {
-      if (showSpinner && !chartCache.get(code as string)) {
+      if (showSpinner && !isUsableChartCache(chartCache.get(code as string))) {
         setLoading(true);
       }
       try {
@@ -85,7 +95,7 @@ export function useMarketRadarChart(code: string | null) {
       } catch (err) {
         if (!active || requestId !== requestIdRef.current) return;
         setError(getParsedApiError(err));
-        if (!chartCache.get(code as string)) {
+        if (!isUsableChartCache(chartCache.get(code as string))) {
           setData(null);
         }
       } finally {

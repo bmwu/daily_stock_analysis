@@ -868,6 +868,36 @@ describe('PortfolioPage FX refresh', () => {
       });
     });
     expect(await screen.findByText('已提交 HK00700 分析任务：task-portfolio-1')).toBeInTheDocument();
+    expect(screen.getByText('分析任务')).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(screen.queryByText('已提交 HK00700 分析任务：task-portfolio-1')).not.toBeInTheDocument();
+    }, { timeout: 4000 });
+  });
+
+  it('shows analysis conflict failures as a top toast instead of an inline page alert', async () => {
+    getSnapshot.mockResolvedValueOnce(makeSnapshot({ fxStale: true, positions: [
+      { symbol: 'BABA', market: 'us', currency: 'USD', quantity: 400, avgCost: 200.4, totalCost: 80160, lastPrice: 122.25, marketValueBase: 48900, unrealizedPnlBase: -31260, unrealizedPnlPct: -39, valuationCurrency: 'USD', priceSource: 'realtime_quote', priceDate: '2026-08-02', priceStale: false, priceAvailable: true },
+    ] }));
+    analyzePosition.mockRejectedValueOnce(
+      createApiError(
+        createParsedApiError({
+          title: '请求失败',
+          message: '股票 BABA 正在分析中 (task_id: bebc5f2dccdb47c7904d74c11daa91ad)',
+        }),
+      ),
+    );
+
+    render(<PortfolioPage />);
+    await waitForInitialLoad();
+
+    const row = screen.getByText('BABA').closest('tr');
+    expect(row).not.toBeNull();
+    fireEvent.click(within(row as HTMLTableRowElement).getByRole('button', { name: '分析' }));
+
+    const toastTitle = await screen.findByText('请求失败');
+    expect(toastTitle.closest('[role="alert"]')).toHaveTextContent('股票 BABA 正在分析中 (task_id: bebc5f2dccdb47c7904d74c11daa91ad)');
+    expect(screen.queryByRole('button', { name: '关闭' })).not.toBeInTheDocument();
   });
 
   it('prefers disabled feedback over empty-pair feedback when refresh is disabled', async () => {

@@ -20,6 +20,8 @@ def test_build_chart_allows_non_ashare_with_daily_fallback(monkeypatch):
     kline = service.build_chart("AAPL", mode="kline")
     assert kline["code"] == "AAPL"
     assert len(kline["candles"]) == 2
+    assert kline["candles"][0]["date"] == "2026-07-01"
+    assert kline["candles"][1]["date"] == "2026-07-02"
     assert kline["intraday"] == []
     assert kline.get("degraded") == []
 
@@ -27,6 +29,27 @@ def test_build_chart_allows_non_ashare_with_daily_fallback(monkeypatch):
     assert len(both["candles"]) == 2
     assert both["intraday"] == []
     assert "intraday_unsupported_market" in (both.get("degraded") or [])
+
+
+def test_bars_from_dataframe_preserves_date_for_us_kline():
+    """Regression: US/HK daily bars must keep date for home K-line axis labels."""
+    import pandas as pd
+
+    from src.services.trading_signal_monitor import _bars_from_dataframe
+
+    df = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2026-07-01", "2026-07-02"]),
+            "open": [90.0, 91.0],
+            "high": [92.0, 93.0],
+            "low": [89.0, 90.5],
+            "close": [91.5, 92.5],
+            "volume": [1_000_000, 1_200_000],
+        }
+    )
+    bars = _bars_from_dataframe(df)
+    assert [bar["date"] for bar in bars] == ["2026-07-01", "2026-07-02"]
+    assert bars[0]["close"] == 91.5
 
 
 def test_build_overview_shape(monkeypatch):
