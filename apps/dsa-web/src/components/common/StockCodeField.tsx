@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import type { KeyboardEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { StockAutocomplete } from '../StockAutocomplete';
 import { useWatchlist } from '../../hooks/useWatchlist';
@@ -74,9 +75,10 @@ export function StockCodeField({
     [sources],
   );
 
+  const portfolioEnabled = enabledSources.includes('portfolio');
+
   useEffect(() => {
-    if (!enabledSources.includes('portfolio')) {
-      setPortfolioCandidates([]);
+    if (!portfolioEnabled) {
       return;
     }
     let cancelled = false;
@@ -86,18 +88,20 @@ export function StockCodeField({
         if (cancelled) return;
         const seen = new Set<string>();
         const next: StockCodeCandidate[] = [];
-        for (const position of snapshot.positions || []) {
-          const code = String(position.symbol || '').trim();
-          if (!code) continue;
-          const key = code.toUpperCase();
-          if (seen.has(key)) continue;
-          seen.add(key);
-          next.push({
-            code,
-            displayCode: code,
-            market: position.market,
-            source: 'portfolio',
-          });
+        for (const account of snapshot.accounts || []) {
+          for (const position of account.positions || []) {
+            const code = String(position.symbol || '').trim();
+            if (!code) continue;
+            const key = code.toUpperCase();
+            if (seen.has(key)) continue;
+            seen.add(key);
+            next.push({
+              code,
+              displayCode: code,
+              market: position.market,
+              source: 'portfolio',
+            });
+          }
         }
         setPortfolioCandidates(next);
       })
@@ -107,7 +111,7 @@ export function StockCodeField({
     return () => {
       cancelled = true;
     };
-  }, [enabledSources]);
+  }, [portfolioEnabled]);
 
   const grouped = useMemo(() => {
     const groups: Record<StockCodeFieldSource, StockCodeCandidate[]> = {
@@ -135,8 +139,12 @@ export function StockCodeField({
       const seen = new Set<string>();
       const deduped: StockCodeCandidate[] = [];
       for (const item of groups[source]) {
-        const key = item.code.trim().toUpperCase();
-        if (!key || seen.has(key)) continue;
+        const code = item.code.trim().toUpperCase();
+        if (!code) continue;
+        const key = item.market
+          ? `${String(item.market).toLowerCase()}:${code}`
+          : code;
+        if (seen.has(key)) continue;
         seen.add(key);
         deduped.push(item);
         if (deduped.length >= chipLimitPerSource) break;
@@ -156,7 +164,10 @@ export function StockCodeField({
   const handlePick = (candidate: StockCodeCandidate) => {
     const nextValue = candidate.displayCode || candidate.code;
     onChange(nextValue);
-    onSelectCandidate?.(candidate);
+    if (onSelectCandidate) {
+      onSelectCandidate(candidate);
+      return;
+    }
     onSubmit?.(candidate.code, {
       name: candidate.name,
       market: candidate.market,
@@ -165,7 +176,7 @@ export function StockCodeField({
     });
   };
 
-  const handlePlainKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+  const handlePlainKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'Enter' && !disabled && value.trim()) {
       event.preventDefault();
       onSubmit?.(value.trim());
@@ -182,35 +193,62 @@ export function StockCodeField({
       {label ? (
         <label className="mb-1.5 block text-xs font-medium text-secondary-text">{label}</label>
       ) : null}
-      {enableAutocomplete ? (
-        <StockAutocomplete
-          value={value}
-          onChange={onChange}
-          onSubmit={(code, name, source, metadata) => {
-            onSubmit?.(code, {
-              name,
-              market: metadata?.market,
-              displayCode: metadata?.displayCode,
-              source,
-            });
-          }}
-          disabled={disabled}
-          placeholder={placeholder}
-          ariaLabel={ariaLabel || label}
-          className={inputClassName}
-        />
-      ) : (
-        <input
-          type="text"
-          value={value}
-          onChange={(event) => onChange(event.target.value)}
-          onKeyDown={handlePlainKeyDown}
-          placeholder={placeholder}
-          aria-label={ariaLabel || label}
-          disabled={disabled}
-          className={cn(PLAIN_INPUT_CLASS, inputClassName)}
-        />
-      )}
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+        <div className="min-w-0 flex-1">
+          {enableAutocomplete ? (
+            <StockAutocomplete
+              value={value}
+              onChange={onChange}
+              onSubmit={(code, name, source, metadata) => {
+                onSubmit?.(code, {
+                  name,
+                  market: metadata?.market,
+                  displayCode: metadata?.displayCode,
+                  source,
+                });
+              }}
+              disabled={disabled}
+              placeholder={placeholder}
+              ariaLabel={ariaLabel || label}
+              className={inputClassName}
+            />
+          ) : (
+            <input
+              type="text"
+              value={value}
+              onChange={(event) => onChange(event.target.value)}
+              onKeyDown={handlePlainKeyDown}
+              placeholder={placeholder}
+              aria-label={ariaLabel || label}
+              disabled={disabled}
+              className={cn(PLAIN_INPUT_CLASS, inputClassName)}
+            />
+          )}
+        </div>
+        {enabledSources.includes('watchlist') && grouped.watchlist.length > 0 ? (
+          <select
+            className="input-surface input-focus-glow h-11 shrink-0 rounded-xl border bg-transparent px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+            defaultValue=""
+            aria-label={t('stockCodeField.pickFromWatchlist')}
+            disabled={disabled}
+            onChange={(event) => {
+              const nextCode = event.target.value;
+              event.target.value = '';
+              if (!nextCode) return;
+              const candidate = grouped.watchlist.find((item) => item.code === nextCode);
+              if (candidate) handlePick(candidate);
+            }}
+          >
+            <option value="">{t('stockCodeField.pickFromWatchlist')}</option>
+            {grouped.watchlist.map((candidate) => (
+              <option key={candidateKey(candidate)} value={candidate.code}>
+                {candidate.displayCode || candidate.code}
+                {candidate.name ? ` ${candidate.name}` : ''}
+              </option>
+            ))}
+          </select>
+        ) : null}
+      </div>
 
       {showCandidateChips ? (
         <div className="mt-3 space-y-3">

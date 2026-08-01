@@ -35,6 +35,14 @@ function n(value?: number | null, fallback = 0): number {
   return value == null || Number.isNaN(Number(value)) ? fallback : Number(value);
 }
 
+function formatRadarPrice(item: MarketRadarInstrument): string {
+  if (item.price == null) {
+    return item.quoteSource ? '暂无行情' : '—';
+  }
+  return number2.format(n(item.price));
+}
+
+
 function instrumentTrend(item: MarketRadarInstrument): 'up' | 'down' | 'mixed' {
   if (item.trend) return item.trend;
   if (item.upTrend) return 'up';
@@ -313,8 +321,8 @@ const MarketRadarPage: React.FC = () => {
                       <small>{item.code}</small>
                     </span>
                     <span>
-                      <b className={changePct >= 0 ? 'up' : 'down'}>{number2.format(n(item.price))}</b>
-                      <small>{trend === 'up' ? '上升' : trend === 'down' ? '下降' : '震荡'}</small>
+                      <b className={item.price == null ? 'neutral' : changePct >= 0 ? 'up' : 'down'}>{formatRadarPrice(item)}</b>
+                      <small>{item.price == null ? '非A股行情暂不支持' : trend === 'up' ? '上升' : trend === 'down' ? '下降' : '震荡'}</small>
                     </span>
                     <span>
                       <b className={changePct >= 0 ? 'up' : 'down'}>{signed(changePct, '%')}</b>
@@ -426,8 +434,8 @@ const MarketRadarPage: React.FC = () => {
                         </small>
                       </span>
                       <span>
-                        <b className={changePct >= 0 ? 'up' : 'down'}>{number2.format(n(item.price))}</b>
-                        <small>今开 {number2.format(n(item.open))}</small>
+                        <b className={item.price == null ? 'neutral' : changePct >= 0 ? 'up' : 'down'}>{formatRadarPrice(item)}</b>
+                        <small>{item.price == null ? (item.quoteSource === 'market_radar_ashare_quotes_only' ? '实时大盘暂仅支持A股报价' : '行情暂不可用') : `今开 ${number2.format(n(item.open))}`}</small>
                       </span>
                       <span>
                         <b className={changePct >= 0 ? 'up' : 'down'}>{signed(changePct, '%')}</b>

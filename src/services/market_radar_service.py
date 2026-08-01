@@ -52,6 +52,31 @@ def _listed_symbol(code: str) -> str:
     return f"sz{code}"
 
 
+
+def _unsupported_watchlist_item(code: str, reason: str) -> Dict[str, Any]:
+    """Keep non-quotable watchlist symbols visible in Market Radar lists."""
+    return {
+        "code": code,
+        "name": code,
+        "asset_type": "other",
+        "price": None,
+        "change_pct": None,
+        "change": None,
+        "open": None,
+        "high": None,
+        "low": None,
+        "previous_close": None,
+        "volume": None,
+        "amount": None,
+        "turnover": None,
+        "signals": [],
+        "quote_source": reason,
+        "trend": "mixed",
+        "up_trend": False,
+        "down_trend": False,
+    }
+
+
 class MarketRadarService:
     def __init__(self, data_manager: Optional[DataFetcherManager] = None):
         self.data_manager = data_manager or DataFetcherManager()
@@ -67,16 +92,20 @@ class MarketRadarService:
             code for code in portfolio_by_code.keys()
             if code.isdigit() and len(code) == 6
         ]
-        watch_codes = []
+        watch_codes_a: List[str] = []
+        watch_codes_other: List[str] = []
         seen_watch = set()
         for raw in watchlist_codes:
             code = normalize_stock_code(raw)
-            if not code.isdigit() or len(code) != 6 or code in seen_watch:
+            if not code or code in seen_watch:
                 continue
             seen_watch.add(code)
-            watch_codes.append(code)
-        # One batch quote + parallel bars for union(holdings, watchlist).
-        union_codes = list(dict.fromkeys([*holding_codes, *watch_codes]))
+            if code.isdigit() and len(code) == 6:
+                watch_codes_a.append(code)
+            else:
+                watch_codes_other.append(code)
+        # One batch quote + parallel bars for union(holdings, A-share watchlist).
+        union_codes = list(dict.fromkeys([*holding_codes, *watch_codes_a]))
         payload = self.monitor.compute_for_codes(
             union_codes,
             portfolio_by_code=portfolio_by_code,
@@ -91,13 +120,26 @@ class MarketRadarService:
             if isinstance(err, dict):
                 errors.append(err)
 
+        watchlist_items: List[Dict[str, Any]] = []
+        for code in watch_codes_a:
+            item = by_code.get(code)
+            if item is not None:
+                watchlist_items.append(item)
+            else:
+                watchlist_items.append(_unsupported_watchlist_item(code, "quote_unavailable"))
+        for code in watch_codes_other:
+            watchlist_items.append(
+                _unsupported_watchlist_item(code, "market_radar_ashare_quotes_only")
+            )
+            errors.append({"code": code, "error": "market_radar_ashare_quotes_only"})
+
         return {
             "updated_at": _now_iso(),
             "provider": "tencent/shared-data-provider",
             "indices": indices,
             "account": account,
             "holdings": [by_code[c] for c in holding_codes if c in by_code],
-            "watchlist": [by_code[c] for c in watch_codes if c in by_code],
+            "watchlist": watchlist_items,
             "errors": errors,
         }
 
