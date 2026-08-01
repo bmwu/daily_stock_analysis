@@ -123,6 +123,53 @@ def resolve_litellm_wire_model(
     return normalized_model
 
 
+def resolve_litellm_provider_namespace(
+    model: str,
+    model_list: Optional[List[Dict[str, Any]]] = None,
+) -> str:
+    """Infer LiteLLM provider namespace for usage and diagnostics attribution."""
+    from src.llm.provider_cache import infer_provider_family
+
+    normalized_model = (model or "").strip()
+    if not normalized_model:
+        return ""
+
+    entries = _resolve_litellm_model_list_entries(normalized_model, model_list)
+    wire_model = resolve_litellm_wire_model(normalized_model, model_list)
+    route_model = wire_model or normalized_model
+
+    api_base: Optional[str] = None
+    custom_provider: Optional[str] = None
+    for entry in entries:
+        params = entry.get("litellm_params", {}) or {}
+        if not isinstance(params, dict):
+            continue
+        if custom_provider is None:
+            custom = str(params.get("custom_llm_provider") or "").strip().lower()
+            custom_provider = custom or None
+        if api_base is None:
+            base = str(params.get("api_base") or params.get("base_url") or "").strip()
+            api_base = base or None
+
+    if custom_provider:
+        inferred = infer_provider_family(
+            model=route_model,
+            provider=custom_provider,
+            api_base=api_base,
+        )
+        if inferred and inferred not in {"", "unknown", "litellm_gateway"}:
+            return inferred
+        return custom_provider
+
+    inferred = infer_provider_family(model=route_model, api_base=api_base)
+    if inferred and inferred not in {"", "unknown"}:
+        return inferred
+
+    if "/" in route_model:
+        return route_model.split("/", 1)[0].lower()
+    return "openai"
+
+
 def _extract_thinking_config(payload: Optional[Dict[str, Any]]) -> Any:
     """Extract a thinking-mode flag from LiteLLM-style request kwargs."""
     if not isinstance(payload, dict):

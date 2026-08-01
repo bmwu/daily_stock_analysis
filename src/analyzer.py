@@ -3341,6 +3341,7 @@ class GeminiAnalyzer:
             result = self._call_litellm(
                 prompt,
                 generation_config={"max_tokens": max_tokens, "temperature": temperature},
+                audit_context={"call_type": "market_review", "transport": "litellm"},
             )
             if isinstance(result, tuple):
                 text, model_used, usage = result

@@ -316,6 +316,38 @@ def _build_budget_guard_result(
     )
 
 
+def _agent_primary_model_from_adapter(llm_adapter: Any) -> str:
+    config = getattr(llm_adapter, "_config", None)
+    if config is None:
+        return ""
+    try:
+        from src.config import get_effective_agent_primary_model
+
+        return (get_effective_agent_primary_model(config) or "").strip()
+    except Exception:
+        return ""
+
+
+def _prepare_agent_usage_persist(
+    response: Any,
+    *,
+    llm_adapter: Any,
+) -> tuple[Optional[str], Dict[str, Any]]:
+    """Build usage row model + payload; never use bare provider namespace as model."""
+    usage = dict(getattr(response, "usage", None) or {})
+    model = (getattr(response, "model", "") or "").strip()
+    provider = (getattr(response, "provider", "") or "").strip()
+    if provider and provider not in {"error"} and not usage.get("provider"):
+        usage["provider"] = provider
+    if provider == "error":
+        return None, usage
+    if not model or model == "error":
+        model = _agent_primary_model_from_adapter(llm_adapter)
+    if not model or model == "error":
+        return None, usage
+    return model, usage
+
+
 # ============================================================
 # Core loop
 # ============================================================
@@ -457,12 +489,18 @@ def run_agent_loop(
         )
         provider_used = response.provider
         total_tokens += (response.usage or {}).get("total_tokens", 0)
-        m = getattr(response, "model", "") or response.provider
-        if m and m != "error":
-            models_used.append(m)
-        model_for_usage = m or response.provider
-        if model_for_usage and model_for_usage != "error" and should_persist_usage_telemetry(response.usage):
-            _persist_usage(response.usage, model_for_usage, call_type="agent")
+        response_model = (getattr(response, "model", "") or "").strip()
+        trace_model = response_model or (
+            response.provider if response.provider not in ("", "error") else ""
+        )
+        model_for_usage, usage_payload = _prepare_agent_usage_persist(
+            response,
+            llm_adapter=llm_adapter,
+        )
+        if model_for_usage:
+            models_used.append(model_for_usage)
+        if model_for_usage and should_persist_usage_telemetry(usage_payload):
+            _persist_usage(usage_payload, model_for_usage, call_type="agent")
 
         remaining_timeout = _remaining_timeout_seconds(start_time, max_wall_clock_seconds)
         if remaining_timeout is not None and remaining_timeout <= 0:
@@ -491,7 +529,7 @@ def run_agent_loop(
                 "role": "assistant",
                 "content": response.content,
                 "_trace_provider": response.provider,
-                "_trace_model": m,
+                "_trace_model": trace_model,
                 "tool_calls": [
                     {
                         "id": tc.id,
