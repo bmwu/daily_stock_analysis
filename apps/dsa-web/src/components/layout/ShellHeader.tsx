@@ -1,8 +1,10 @@
 import type React from 'react';
+import { useEffect } from 'react';
 import { Menu, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 import { useUiLanguage } from '../../contexts/UiLanguageContext';
 import type { UiTextKey } from '../../i18n/uiText';
+import { documentTitleForPath } from '../../utils/routeDocumentTitle';
 import { UiLanguageToggle } from '../i18n/UiLanguageToggle';
 import { ThemeToggle } from '../theme/ThemeToggle';
 
@@ -33,6 +35,13 @@ export const ShellHeader: React.FC<ShellHeaderProps> = ({
   const location = useLocation();
   const { t } = useUiLanguage();
   const current = TITLES[location.pathname];
+
+  useEffect(() => {
+    const title = documentTitleForPath(location.pathname, t);
+    if (title) {
+      document.title = title;
+    }
+  }, [location.pathname, t]);
 
   return (
     <header className="sticky top-0 z-30 border-b border-border/60 bg-background/84 backdrop-blur-xl">

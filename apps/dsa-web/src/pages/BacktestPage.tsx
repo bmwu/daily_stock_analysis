@@ -255,11 +255,6 @@ const BacktestPage: React.FC = () => {
   const [codeFilter, setCodeFilter] = useState('');
   const [historyCodeCandidates, setHistoryCodeCandidates] = useState<StockCodeCandidate[]>([]);
 
-  // Set page title
-  useEffect(() => {
-    document.title = text.documentTitle;
-  }, [text.documentTitle]);
-
   useEffect(() => {
     let mounted = true;
     void historyApi.getStockBarList({ limit: 12 })

@@ -959,11 +959,6 @@ const SettingsPage: React.FC = () => {
   const desktopAppVersion = getDesktopAppVersion();
   const shouldShowDesktopVersionCard = Boolean(desktopAppVersion);
 
-  // Set page title
-  useEffect(() => {
-    document.title = t('settings.pageTitleDocument');
-  }, [t]);
-
   const {
     categories,
     itemsByCategory,

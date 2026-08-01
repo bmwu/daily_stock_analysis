@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [修复] Shell 侧栏全部菜单统一设置浏览器标签标题（与导航文案一致，如「首页 / 诊股 / 问股 - DSA」）。
+- [修复] 持仓快照总权益币种：单账户或全部账户基准币一致时沿用该基准币（如美股 USD），仅多币种混合时才汇总为 CNY。
 - [修复] Yahoo 美股涨跌幅优先用 `regularMarketPreviousClose` / `regularMarketChangePercent`，避免 `fast_info.previousClose` 偏差（如 BABA 3.16% vs 5.1%）。
 - [修复] 持仓管理顶栏：改用 Card；限制账户视图/成本口径宽度，操作按钮同一行靠右，避免宽屏挤压。
 - [修复] 首页盯盘 overview：指数分区并行拉取并设时限，与个股信号并行；超时不再整页空白，前端超时放宽至 60s。

@@ -470,6 +470,87 @@ class PortfolioPr2TestCase(unittest.TestCase):
         self.assertIn("AAPL", positions)
         self.assertAlmostEqual(positions["AAPL"]["market_value_base"], 700.0, places=6)
 
+    def test_snapshot_uses_account_base_currency_for_single_usd_account(self) -> None:
+        us_account = self.service.create_account(name="US", broker="Demo", market="us", base_currency="USD")
+        us_id = us_account["id"]
+        self.service.record_cash_ledger(
+            account_id=us_id,
+            event_date=date(2026, 1, 1),
+            direction="in",
+            amount=200.0,
+            currency="USD",
+        )
+        self.service.record_trade(
+            account_id=us_id,
+            symbol="AAPL",
+            trade_date=date(2026, 1, 1),
+            side="buy",
+            quantity=1,
+            price=100,
+            market="us",
+            currency="USD",
+        )
+        self._save_close("AAPL", date(2026, 1, 1), 110.0)
+
+        snapshot = self.service.get_portfolio_snapshot(
+            account_id=us_id,
+            as_of=date(2026, 1, 1),
+            cost_method="fifo",
+        )
+        self.assertEqual(snapshot["currency"], "USD")
+        self.assertAlmostEqual(snapshot["total_market_value"], 110.0, places=6)
+        self.assertAlmostEqual(snapshot["total_cash"], 100.0, places=6)
+        self.assertAlmostEqual(snapshot["total_equity"], 210.0, places=6)
+        self.assertEqual(snapshot["accounts"][0]["positions"][0]["valuation_currency"], "USD")
+
+    def test_snapshot_keeps_shared_base_currency_across_all_usd_accounts(self) -> None:
+        first = self.service.create_account(name="US-1", broker="Demo", market="us", base_currency="USD")
+        second = self.service.create_account(name="US-2", broker="Demo", market="us", base_currency="USD")
+        for account in (first, second):
+            self.service.record_cash_ledger(
+                account_id=account["id"],
+                event_date=date(2026, 1, 1),
+                direction="in",
+                amount=50.0,
+                currency="USD",
+            )
+
+        snapshot = self.service.get_portfolio_snapshot(as_of=date(2026, 1, 1), cost_method="fifo")
+        self.assertEqual(snapshot["currency"], "USD")
+        self.assertAlmostEqual(snapshot["total_cash"], 100.0, places=6)
+        self.assertAlmostEqual(snapshot["total_equity"], 100.0, places=6)
+
+    def test_snapshot_falls_back_to_cny_for_mixed_base_currencies(self) -> None:
+        cn_account = self.service.create_account(name="CN", broker="Demo", market="cn", base_currency="CNY")
+        us_account = self.service.create_account(name="US", broker="Demo", market="us", base_currency="USD")
+        self.service.record_cash_ledger(
+            account_id=cn_account["id"],
+            event_date=date(2026, 1, 1),
+            direction="in",
+            amount=70.0,
+            currency="CNY",
+        )
+        self.service.record_cash_ledger(
+            account_id=us_account["id"],
+            event_date=date(2026, 1, 1),
+            direction="in",
+            amount=10.0,
+            currency="USD",
+        )
+        self.service.repo.save_fx_rate(
+            from_currency="USD",
+            to_currency="CNY",
+            rate_date=date(2026, 1, 1),
+            rate=7.0,
+            source="manual",
+            is_stale=False,
+        )
+
+        snapshot = self.service.get_portfolio_snapshot(as_of=date(2026, 1, 1), cost_method="fifo")
+        self.assertEqual(snapshot["currency"], "CNY")
+        self.assertAlmostEqual(snapshot["total_cash"], 140.0, places=6)
+        self.assertAlmostEqual(snapshot["total_equity"], 140.0, places=6)
+
     def test_sector_concentration_uses_unclassified_for_non_cn(self) -> None:
         us_account = self.service.create_account(name="US", broker="Demo", market="us", base_currency="USD")
         us_id = us_account["id"]

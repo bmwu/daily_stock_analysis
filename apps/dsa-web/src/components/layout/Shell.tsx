@@ -1,13 +1,14 @@
 import type React from 'react';
 import { useEffect, useState } from 'react';
 import { Menu } from 'lucide-react';
-import { Outlet } from 'react-router-dom';
+import { Outlet, useLocation } from 'react-router-dom';
 import { Drawer } from '../common/Drawer';
 import { SidebarNav } from './SidebarNav';
 import { cn } from '../../utils/cn';
 import { ThemeToggle } from '../theme/ThemeToggle';
 import { UiLanguageToggle } from '../i18n/UiLanguageToggle';
 import { useUiLanguage } from '../../contexts/UiLanguageContext';
+import { documentTitleForPath } from '../../utils/routeDocumentTitle';
 
 type ShellProps = {
   children?: React.ReactNode;
@@ -17,6 +18,14 @@ export const Shell: React.FC<ShellProps> = ({ children }) => {
   const [mobileOpen, setMobileOpen] = useState(false);
   const collapsed = false;
   const { t } = useUiLanguage();
+  const location = useLocation();
+
+  useEffect(() => {
+    const title = documentTitleForPath(location.pathname, t);
+    if (title) {
+      document.title = title;
+    }
+  }, [location.pathname, t]);
 
   useEffect(() => {
     if (!mobileOpen) {

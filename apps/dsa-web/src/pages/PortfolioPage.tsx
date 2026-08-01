@@ -184,11 +184,6 @@ const PortfolioPage: React.FC = () => {
   const text = PORTFOLIO_TEXT[language];
   const decisionActionLabels = useMemo(() => buildDecisionActionLabelMap(t), [t]);
 
-  // Set page title
-  useEffect(() => {
-    document.title = text.documentTitle;
-  }, [text.documentTitle]);
-
   const [accounts, setAccounts] = useState<PortfolioAccountItem[]>([]);
   const [selectedAccount, setSelectedAccount] = useState<AccountOption>('all');
   const [showCreateAccount, setShowCreateAccount] = useState(false);
