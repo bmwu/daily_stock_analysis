@@ -5,6 +5,7 @@ import { useTheme } from 'next-themes';
 import { ApiErrorAlert, InlineAlert } from '../components/common';
 import { DemoChart, TradingChart } from '../components/market-radar/TradingChart';
 import { RuleBadges, SortHeader } from '../components/market-radar/chartUtils';
+import { IndexMoreDrawer } from '../components/market-radar/IndexMoreDrawer';
 import {
   formatAmount,
   levelLabel,
@@ -18,6 +19,10 @@ import {
 import { useMarketRadarChart, useMarketRadarOverview } from '../hooks/useMarketRadarData';
 import type { MarketRadarInstrument, MarketRadarSignalLevel } from '../types/marketRadar';
 import { ruleText, splitRuleIds } from '../components/market-radar/ruleText';
+import {
+  loadFavoriteIndexCodes,
+  toggleFavoriteIndexCode,
+} from '../utils/marketRadarIndexFavorites';
 import '../components/market-radar/marketRadar.css';
 
 const ruleGroups = [
@@ -63,12 +68,43 @@ const MarketRadarPage: React.FC = () => {
     direction: 'desc',
   });
   const [selectedRule, setSelectedRule] = useState<string | null>(null);
+  const [favoriteIndexCodes, setFavoriteIndexCodes] = useState<string[]>(() => loadFavoriteIndexCodes());
+  const [indexDrawerOpen, setIndexDrawerOpen] = useState(false);
   const theme: 'dark' | 'light' = resolvedTheme === 'light' ? 'light' : 'dark';
 
   const collection = useMemo(
     () => (portfolioTab === 'holdings' ? data?.holdings ?? [] : data?.watchlist ?? []),
     [data, portfolioTab],
   );
+
+  const favoriteIndices = useMemo(() => {
+    const byCode = new Map((data?.indices || []).map((item) => [item.code, item]));
+    const catalogByCode = new Map((data?.indexCatalog || []).map((item) => [item.code, item]));
+    return favoriteIndexCodes
+      .map((code) => {
+        const quoted = byCode.get(code);
+        if (quoted) return quoted;
+        const meta = catalogByCode.get(code);
+        if (!meta) return null;
+        return { code: meta.code, name: meta.name, region: meta.region };
+      })
+      .filter((item): item is NonNullable<typeof item> => item != null);
+  }, [data?.indexCatalog, data?.indices, favoriteIndexCodes]);
+
+  const indexCatalog = useMemo(() => {
+    if (data?.indexCatalog && data.indexCatalog.length > 0) {
+      return data.indexCatalog;
+    }
+    return (data?.indices || []).map((item) => ({
+      code: item.code,
+      name: item.name,
+      region: item.region || 'cn',
+    }));
+  }, [data?.indexCatalog, data?.indices]);
+
+  const handleToggleFavoriteIndex = (code: string) => {
+    setFavoriteIndexCodes((prev) => toggleFavoriteIndexCode(prev, code));
+  };
 
   const sortedCollection = useMemo(() => {
     const trendRank = { down: 0, mixed: 1, up: 2 } as const;
@@ -223,22 +259,43 @@ const MarketRadarPage: React.FC = () => {
 
         <section className="index-strip" aria-label="大盘指数">
           {loading && !data && [1, 2, 3].map((item) => <div className="index-card skeleton" key={item} />)}
-          {(data?.indices || []).map((index) => (
+          {favoriteIndices.map((index) => (
             <article className="index-card" key={index.code}>
               <div className="index-title">
                 <span>{index.name}</span>
                 <small>{index.code}</small>
               </div>
               <div className="index-main">
-                <strong>{number2.format(n(index.price))}</strong>
-                <span className={n(index.changePct) >= 0 ? 'up' : 'down'}>{signed(n(index.changePct), '%')}</span>
+                <strong>{index.price == null ? '—' : number2.format(n(index.price))}</strong>
+                <span className={n(index.changePct) >= 0 ? 'up' : 'down'}>
+                  {index.changePct == null ? '—' : signed(n(index.changePct), '%')}
+                </span>
               </div>
               <div className="index-foot">
-                <span>{signed(n(index.change))}</span>
-                <span>成交额 {formatAmount(n(index.amount))}</span>
+                <span>{index.change == null ? '—' : signed(n(index.change))}</span>
+                <span>成交额 {index.amount == null ? '—' : formatAmount(n(index.amount))}</span>
               </div>
             </article>
           ))}
+          <button
+            type="button"
+            className="index-card index-more-card"
+            onClick={() => setIndexDrawerOpen(true)}
+            aria-label="更多指数"
+          >
+            <div className="index-title">
+              <span>更多指数</span>
+              <small>设置常用</small>
+            </div>
+            <div className="index-main">
+              <strong>+</strong>
+              <span className="neutral">{indexCatalog.length} 只可选</span>
+            </div>
+            <div className="index-foot">
+              <span>跨市场全表</span>
+              <span>抽屉管理</span>
+            </div>
+          </button>
           <article className="index-card account-summary">
             <div className="index-title">
               <span>账户概览</span>
@@ -256,6 +313,15 @@ const MarketRadarPage: React.FC = () => {
             </div>
           </article>
         </section>
+
+        <IndexMoreDrawer
+          open={indexDrawerOpen}
+          onClose={() => setIndexDrawerOpen(false)}
+          catalog={indexCatalog}
+          quotes={data?.indices || []}
+          favoriteCodes={favoriteIndexCodes}
+          onToggleFavorite={handleToggleFavoriteIndex}
+        />
 
         <section className="workspace">
           <section className="panel quote-list-panel">

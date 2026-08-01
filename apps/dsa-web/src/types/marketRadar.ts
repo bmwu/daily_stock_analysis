@@ -44,10 +44,17 @@ export type MarketRadarInstrument = {
 export type MarketRadarIndex = {
   code: string;
   name: string;
+  region?: string;
   price?: number | null;
   changePct?: number | null;
   change?: number | null;
   amount?: number | null;
+};
+
+export type MarketRadarIndexCatalogItem = {
+  code: string;
+  name: string;
+  region: string;
 };
 
 export type MarketRadarAccount = {
@@ -66,6 +73,7 @@ export type MarketRadarOverview = {
   updatedAt: string;
   provider: string;
   indices: MarketRadarIndex[];
+  indexCatalog?: MarketRadarIndexCatalogItem[];
   account: MarketRadarAccount | null;
   holdings: MarketRadarInstrument[];
   watchlist: MarketRadarInstrument[];

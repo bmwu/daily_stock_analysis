@@ -13,7 +13,7 @@ def test_build_chart_rejects_non_ashare_code():
 def test_build_overview_shape(monkeypatch):
     service = MarketRadarService.__new__(MarketRadarService)
 
-    monkeypatch.setattr(service, "_load_indices", lambda errors: [{"code": "000001", "name": "上证指数", "price": 3000}])
+    monkeypatch.setattr(service, "_load_indices", lambda errors: [{"code": "000001", "name": "上证指数", "region": "cn", "price": 3000}])
     monkeypatch.setattr(service, "_load_portfolio", lambda errors: ({}, {"cash": 1.0, "total_asset": 2.0}))
     monkeypatch.setattr(service, "_load_watchlist", lambda errors: ["600519"])
 
@@ -28,8 +28,25 @@ def test_build_overview_shape(monkeypatch):
     payload = service.build_overview()
     assert "updated_at" in payload
     assert payload["indices"][0]["code"] == "000001"
+    assert payload["index_catalog"][0]["code"] == "000001"
+    assert any(item["region"] == "us" for item in payload["index_catalog"])
     assert payload["watchlist"][0]["code"] == "600519"
     assert payload["holdings"] == []
+
+
+def test_normalize_index_quote_prefers_price_fields():
+    from src.services.market_radar_service import _normalize_index_quote
+
+    row = _normalize_index_quote(
+        code="HSI",
+        name="恒生指数",
+        region="hk",
+        row={"current": 18000.5, "change_percent": 1.2, "change_amount": 10},
+    )
+    assert row["price"] == 18000.5
+    assert row["change_pct"] == 1.2
+    assert row["change"] == 10
+    assert row["region"] == "hk"
 
 
 def test_build_overview_keeps_non_ashare_watchlist(monkeypatch):
