@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [改进] 首页改为实时大盘盯盘页；原分析工作台迁至「诊股」（`/analysis`，位于问股前）；`/market-radar` 兼容跳转首页。
 - [改进] 实时大盘持仓/自选改为全市场报价；日 K 走通用日线，非 A 股分时降级；无日线时保留报价并显示「信号暂不可用」。
 - [改进] 实时大盘「更多指数」改为顶栏按钮（紧随「刷新行情」），抽屉管理常用指数。
 - [改进] 实时大盘指数区支持常用指数主条 +「更多」抽屉（跨市场全表、按区筛选、设/取消常用，偏好存本机）。
