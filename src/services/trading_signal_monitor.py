@@ -22,10 +22,28 @@ from src.services.trading_signal_service import (
 logger = logging.getLogger(__name__)
 
 
-def _bars_from_dataframe(df) -> List[Dict[str, float]]:
+def _format_bar_date(value: Any) -> str:
+    """Normalize a dataframe date cell to YYYY-MM-DD for chart axis labels."""
+    if value is None:
+        return ""
+    if hasattr(value, "strftime"):
+        try:
+            return value.strftime("%Y-%m-%d")
+        except (ValueError, OSError, OverflowError):
+            pass
+    text = str(value).strip()
+    if not text or text.lower() in {"nan", "nat", "none"}:
+        return ""
+    # Prefer the ISO date prefix when present (handles "2026-07-01 00:00:00-04:00").
+    if len(text) >= 10 and text[4] == "-" and text[7] == "-":
+        return text[:10]
+    return text[:10]
+
+
+def _bars_from_dataframe(df) -> List[Dict[str, Any]]:
     if df is None or getattr(df, "empty", True):
         return []
-    rows: List[Dict[str, float]] = []
+    rows: List[Dict[str, Any]] = []
     colmap = {
         "open": ("open", "开盘", "Open"),
         "close": ("close", "收盘", "Close"),
@@ -46,8 +64,18 @@ def _bars_from_dataframe(df) -> List[Dict[str, float]]:
                 break
     if "close" not in resolved:
         return []
+
+    date_col = None
+    for alias in ("date", "日期", "Date", "Datetime", "datetime", "trade_date"):
+        if alias in columns:
+            date_col = columns[alias]
+            break
+        if alias.lower() in lower_map:
+            date_col = lower_map[alias.lower()]
+            break
+
     for _, row in df.iterrows():
-        item = {}
+        item: Dict[str, Any] = {}
         for key, col in resolved.items():
             try:
                 item[key] = float(row[col])
@@ -55,6 +83,9 @@ def _bars_from_dataframe(df) -> List[Dict[str, float]]:
                 item[key] = 0.0
         for key in ("open", "high", "low", "volume"):
             item.setdefault(key, item.get("close", 0.0) if key != "volume" else 0.0)
+        # US/HK daily bars come through get_daily_data; without date the home K-line
+        # axis renders blank ("".slice(5) on the frontend).
+        item["date"] = _format_bar_date(row[date_col]) if date_col is not None else ""
         rows.append(item)
     return rows
 

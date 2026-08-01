@@ -5,12 +5,11 @@ import { decisionSignalsApi } from '../api/decisionSignals';
 import { portfolioApi } from '../api/portfolio';
 import type { ParsedApiError } from '../api/error';
 import { getParsedApiError } from '../api/error';
-import { ApiErrorAlert, Card, Badge, ConfirmDialog, EmptyState, InlineAlert } from '../components/common';
+import { ApiErrorAlert, Card, Badge, ConfirmDialog, EmptyState, InlineAlert, ToastViewport } from '../components/common';
 import { PortfolioSignalSummary } from '../components/decision-signals/DecisionSignalDisplay';
 import { useUiLanguage } from '../contexts/UiLanguageContext';
 import { formatUiText } from '../i18n/uiText';
 import { PORTFOLIO_TEXT } from '../locales/featureText';
-import type { FxRefreshFeedback } from '../utils/portfolioFormat';
 import {
   buildFxRefreshFeedback,
   formatBrokerLabel,
@@ -112,6 +111,12 @@ type FxRefreshContext = {
   requestId: number;
 };
 
+type ActionToast = {
+  variant: 'info' | 'success' | 'warning' | 'danger';
+  title: string;
+  message: string;
+};
+
 const PORTFOLIO_INPUT_CLASS =
   'input-surface input-focus-glow h-11 w-full rounded-xl border bg-transparent px-4 text-sm transition-all focus:outline-none disabled:cursor-not-allowed disabled:opacity-60';
 const PORTFOLIO_SELECT_CLASS = `${PORTFOLIO_INPUT_CLASS} appearance-none pr-10`;
@@ -188,8 +193,6 @@ const PortfolioPage: React.FC = () => {
   const [selectedAccount, setSelectedAccount] = useState<AccountOption>('all');
   const [showCreateAccount, setShowCreateAccount] = useState(false);
   const [accountCreating, setAccountCreating] = useState(false);
-  const [accountCreateError, setAccountCreateError] = useState<string | null>(null);
-  const [accountCreateSuccess, setAccountCreateSuccess] = useState<string | null>(null);
   const [accountForm, setAccountForm] = useState({
     name: '',
     broker: 'Demo',
@@ -201,17 +204,15 @@ const PortfolioPage: React.FC = () => {
   const [risk, setRisk] = useState<PortfolioRiskResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [fxRefreshing, setFxRefreshing] = useState(false);
-  const [fxRefreshFeedback, setFxRefreshFeedback] = useState<FxRefreshFeedback | null>(null);
   const [error, setError] = useState<ParsedApiError | null>(null);
   const [riskWarning, setRiskWarning] = useState<string | null>(null);
-  const [writeWarning, setWriteWarning] = useState<string | null>(null);
+  const [actionToast, setActionToast] = useState<ActionToast | null>(null);
   const [portfolioSignals, setPortfolioSignals] = useState<DecisionSignalItem[]>([]);
   const [portfolioSignalsLoading, setPortfolioSignalsLoading] = useState(false);
   const [portfolioSignalsWarning, setPortfolioSignalsWarning] = useState<string | null>(null);
   const [portfolioSignalsRefreshKey, setPortfolioSignalsRefreshKey] = useState(0);
   const portfolioSignalsRequestRef = useRef(0);
   const [positionAnalysisLoadingKey, setPositionAnalysisLoadingKey] = useState<string | null>(null);
-  const [positionAnalysisMessage, setPositionAnalysisMessage] = useState<string | null>(null);
 
   const [brokers, setBrokers] = useState<PortfolioImportBrokerItem[]>([]);
   const [selectedBroker, setSelectedBroker] = useState('huatai');
@@ -447,7 +448,7 @@ const PortfolioPage: React.FC = () => {
       requestId: refreshContextRef.current.requestId + 1,
     };
     setFxRefreshing(false);
-    setFxRefreshFeedback(null);
+    setActionToast(null);
   }, [refreshViewKey]);
 
   useEffect(() => {
@@ -455,10 +456,14 @@ const PortfolioPage: React.FC = () => {
   }, [eventType, queryAccountId, eventDateFrom, eventDateTo, eventSymbol, eventSide, eventDirection, eventActionType]);
 
   useEffect(() => {
-    if (!writeBlocked) {
-      setWriteWarning(null);
-    }
-  }, [writeBlocked]);
+    if (!actionToast) return undefined;
+    const timer = window.setTimeout(() => {
+      setActionToast(null);
+    }, 3200);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [actionToast]);
 
   const positionRows: FlatPosition[] = useMemo(() => {
     if (!snapshot) return [];
@@ -475,6 +480,48 @@ const PortfolioPage: React.FC = () => {
     rows.sort((a, b) => Number(b.marketValueBase || 0) - Number(a.marketValueBase || 0));
     return rows;
   }, [snapshot]);
+
+  const summaryMetrics = useMemo(() => {
+    const accountSnapshots = snapshot?.accounts || [];
+    if (queryAccountId != null) {
+      const account = accountSnapshots.find((item) => item.accountId === queryAccountId)
+        || accountSnapshots[0];
+      if (account) {
+        return {
+          currency: account.baseCurrency || snapshot?.currency || 'CNY',
+          totalEquity: account.totalEquity,
+          totalMarketValue: account.totalMarketValue,
+          totalCash: account.totalCash,
+          fxStale: account.fxStale,
+        };
+      }
+    }
+
+    const sharedCurrencies = Array.from(
+      new Set(
+        accountSnapshots
+          .map((item) => String(item.baseCurrency || '').trim().toUpperCase())
+          .filter(Boolean),
+      ),
+    );
+    if (sharedCurrencies.length === 1 && accountSnapshots.length > 0) {
+      return {
+        currency: sharedCurrencies[0],
+        totalEquity: accountSnapshots.reduce((sum, item) => sum + Number(item.totalEquity || 0), 0),
+        totalMarketValue: accountSnapshots.reduce((sum, item) => sum + Number(item.totalMarketValue || 0), 0),
+        totalCash: accountSnapshots.reduce((sum, item) => sum + Number(item.totalCash || 0), 0),
+        fxStale: accountSnapshots.some((item) => item.fxStale) || Boolean(snapshot?.fxStale),
+      };
+    }
+
+    return {
+      currency: snapshot?.currency || 'CNY',
+      totalEquity: snapshot?.totalEquity,
+      totalMarketValue: snapshot?.totalMarketValue,
+      totalCash: snapshot?.totalCash,
+      fxStale: Boolean(snapshot?.fxStale),
+    };
+  }, [queryAccountId, snapshot]);
 
   const snapshotMatchesAccountScope = useMemo(() => {
     if (!snapshot) return false;
@@ -567,20 +614,36 @@ const PortfolioPage: React.FC = () => {
     return mapped;
   }, [portfolioSignals, positionRows]);
 
+  const pushActionToast = (
+    variant: ActionToast['variant'],
+    title: string,
+    message: string,
+  ) => {
+    setActionToast({ variant, title, message });
+  };
+
+  const pushActionErrorToast = (err: unknown, fallbackTitle = '请求失败') => {
+    const parsed = getParsedApiError(err);
+    pushActionToast('danger', parsed.title || fallbackTitle, parsed.message);
+  };
+
   const handleAnalyzePosition = async (row: FlatPosition) => {
     const key = `${row.accountId}-${row.symbol}-${row.market}`;
     setPositionAnalysisLoadingKey(key);
-    setPositionAnalysisMessage(null);
-    setError(null);
+    setActionToast(null);
     try {
       const task = await portfolioApi.analyzePosition(row.symbol, {
         accountId: row.accountId,
         analysisPhase: 'auto',
         force: false,
       });
-      setPositionAnalysisMessage(`已提交 ${row.symbol} 分析任务：${task.taskId}`);
+      pushActionToast(
+        'success',
+        text.analysisTask,
+        `已提交 ${row.symbol} 分析任务：${task.taskId}`,
+      );
     } catch (err) {
-      setError(getParsedApiError(err));
+      pushActionErrorToast(err);
     } finally {
       setPositionAnalysisLoadingKey(null);
     }
@@ -616,12 +679,11 @@ const PortfolioPage: React.FC = () => {
   const handleTradeSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!writableAccountId) {
-      setWriteWarning('请先在右上角选择具体账户，再进行录入或导入提交。');
+      pushActionToast('warning', text.operationHint, '请先在右上角选择具体账户，再进行录入或导入提交。');
       return;
     }
     try {
-      setWriteWarning(null);
-      await portfolioApi.createTrade({
+            await portfolioApi.createTrade({
         accountId: writableAccountId,
         symbol: tradeForm.symbol,
         tradeDate: tradeForm.tradeDate,
@@ -636,19 +698,18 @@ const PortfolioPage: React.FC = () => {
       await refreshPortfolioData();
       setTradeForm((prev) => ({ ...prev, symbol: '', tradeUid: '', note: '' }));
     } catch (err) {
-      setError(getParsedApiError(err));
+      pushActionErrorToast(err);
     }
   };
 
   const handleCashSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!writableAccountId) {
-      setWriteWarning('请先在右上角选择具体账户，再进行录入或导入提交。');
+      pushActionToast('warning', text.operationHint, '请先在右上角选择具体账户，再进行录入或导入提交。');
       return;
     }
     try {
-      setWriteWarning(null);
-      await portfolioApi.createCashLedger({
+            await portfolioApi.createCashLedger({
         accountId: writableAccountId,
         eventDate: cashForm.eventDate,
         direction: cashForm.direction,
@@ -659,19 +720,18 @@ const PortfolioPage: React.FC = () => {
       await refreshPortfolioData();
       setCashForm((prev) => ({ ...prev, note: '' }));
     } catch (err) {
-      setError(getParsedApiError(err));
+      pushActionErrorToast(err);
     }
   };
 
   const handleCorporateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!writableAccountId) {
-      setWriteWarning('请先在右上角选择具体账户，再进行录入或导入提交。');
+      pushActionToast('warning', text.operationHint, '请先在右上角选择具体账户，再进行录入或导入提交。');
       return;
     }
     try {
-      setWriteWarning(null);
-      await portfolioApi.createCorporateAction({
+            await portfolioApi.createCorporateAction({
         accountId: writableAccountId,
         symbol: corpForm.symbol,
         effectiveDate: corpForm.effectiveDate,
@@ -683,7 +743,7 @@ const PortfolioPage: React.FC = () => {
       await refreshPortfolioData();
       setCorpForm((prev) => ({ ...prev, symbol: '', note: '' }));
     } catch (err) {
-      setError(getParsedApiError(err));
+      pushActionErrorToast(err);
     }
   };
 
@@ -695,7 +755,7 @@ const PortfolioPage: React.FC = () => {
       setCsvParseResult(parsed);
       setCsvCommitResult(null);
     } catch (err) {
-      setError(getParsedApiError(err));
+      pushActionErrorToast(err);
     } finally {
       setCsvParsing(false);
     }
@@ -704,19 +764,18 @@ const PortfolioPage: React.FC = () => {
   const handleCommitCsv = async () => {
     if (!csvFile) return;
     if (!writableAccountId) {
-      setWriteWarning('请先在右上角选择具体账户，再进行录入或导入提交。');
+      pushActionToast('warning', text.operationHint, '请先在右上角选择具体账户，再进行录入或导入提交。');
       return;
     }
     try {
-      setWriteWarning(null);
-      setCsvCommitting(true);
+            setCsvCommitting(true);
       const committed = await portfolioApi.commitCsvImport(writableAccountId, selectedBroker, csvFile, csvDryRun);
       setCsvCommitResult(committed);
       if (!csvDryRun) {
         await refreshPortfolioData();
       }
     } catch (err) {
-      setError(getParsedApiError(err));
+      pushActionErrorToast(err);
     } finally {
       setCsvCommitting(false);
     }
@@ -724,7 +783,7 @@ const PortfolioPage: React.FC = () => {
 
   const openDeleteDialog = (item: PendingDelete) => {
     if (!writableAccountId) {
-      setWriteWarning('请先在右上角选择具体账户，再进行删除修正。');
+      pushActionToast('warning', text.operationHint, '请先在右上角选择具体账户，再进行删除修正。');
       return;
     }
     setPendingDelete(item);
@@ -732,7 +791,7 @@ const PortfolioPage: React.FC = () => {
 
   const openAccountDeleteDialog = () => {
     if (!writableAccount) {
-      setWriteWarning('请先选择具体账户，再删除持仓账户。');
+      pushActionToast('warning', text.operationHint, '请先选择具体账户，再删除持仓账户。');
       return;
     }
     setPendingAccountDelete({
@@ -746,8 +805,7 @@ const PortfolioPage: React.FC = () => {
 
     try {
       setAccountDeleteLoading(true);
-      setWriteWarning(null);
-      await portfolioApi.deleteAccount(pendingAccountDelete.accountId);
+            await portfolioApi.deleteAccount(pendingAccountDelete.accountId);
       const nextAccount = accounts.find((item) => item.id !== pendingAccountDelete.accountId);
       setSelectedAccount(nextAccount?.id ?? 'all');
       setPendingAccountDelete(null);
@@ -755,7 +813,7 @@ const PortfolioPage: React.FC = () => {
       await loadAccounts();
       setEventPage(1);
     } catch (err) {
-      setError(getParsedApiError(err));
+      pushActionErrorToast(err);
     } finally {
       setAccountDeleteLoading(false);
     }
@@ -764,7 +822,7 @@ const PortfolioPage: React.FC = () => {
   const handleConfirmDelete = async () => {
     if (!pendingDelete || deleteLoading) return;
     if (!writableAccountId) {
-      setWriteWarning('请先在右上角选择具体账户，再进行删除修正。');
+      pushActionToast('warning', text.operationHint, '请先在右上角选择具体账户，再进行删除修正。');
       setPendingDelete(null);
       return;
     }
@@ -772,8 +830,7 @@ const PortfolioPage: React.FC = () => {
     const nextPage = currentEventCount === 1 && eventPage > 1 ? eventPage - 1 : eventPage;
     try {
       setDeleteLoading(true);
-      setWriteWarning(null);
-      if (pendingDelete.eventType === 'trade') {
+            if (pendingDelete.eventType === 'trade') {
         await portfolioApi.deleteTrade(pendingDelete.id);
       } else if (pendingDelete.eventType === 'cash') {
         await portfolioApi.deleteCashLedger(pendingDelete.id);
@@ -786,7 +843,7 @@ const PortfolioPage: React.FC = () => {
       }
       await refreshPortfolioData(nextPage);
     } catch (err) {
-      setError(getParsedApiError(err));
+      pushActionErrorToast(err);
     } finally {
       setDeleteLoading(false);
     }
@@ -796,14 +853,11 @@ const PortfolioPage: React.FC = () => {
     e.preventDefault();
     const name = accountForm.name.trim();
     if (!name) {
-      setAccountCreateError('账户名称不能为空。');
-      setAccountCreateSuccess(null);
+      pushActionToast('danger', '创建账户失败', '账户名称不能为空。');
       return;
     }
     try {
       setAccountCreating(true);
-      setAccountCreateError(null);
-      setAccountCreateSuccess(null);
       const created = await portfolioApi.createAccount({
         name,
         broker: accountForm.broker.trim() || undefined,
@@ -813,22 +867,21 @@ const PortfolioPage: React.FC = () => {
       await loadAccounts();
       setSelectedAccount(created.id);
       setShowCreateAccount(false);
-      setWriteWarning(null);
       setAccountForm({
         name: '',
         broker: 'Demo',
         market: accountForm.market,
         baseCurrency: accountForm.baseCurrency,
       });
-      setAccountCreateSuccess('账户创建成功，已自动切换到该账户。');
+      pushActionToast('success', '创建账户成功', '账户创建成功，已自动切换到该账户。');
     } catch (err) {
       const parsed = getParsedApiError(err);
-      setAccountCreateError(parsed.message || '创建账户失败，请稍后重试。');
-      setAccountCreateSuccess(null);
+      pushActionToast('danger', '创建账户失败', parsed.message || '创建账户失败，请稍后重试。');
     } finally {
       setAccountCreating(false);
     }
   };
+
 
   const handleRefresh = async () => {
     await Promise.all([loadAccounts(), loadSnapshotAndRisk(), loadEvents(), loadBrokers()]);
@@ -906,7 +959,7 @@ const PortfolioPage: React.FC = () => {
 
     try {
       setFxRefreshing(true);
-      setFxRefreshFeedback(null);
+      setActionToast(null);
       const result = await portfolioApi.refreshFx({
         accountId: requestedAccountId,
       });
@@ -922,12 +975,17 @@ const PortfolioPage: React.FC = () => {
       if (!reloaded || !isActiveRefreshContext(requestedViewKey, requestedRequestId)) {
         return;
       }
-      setFxRefreshFeedback(buildFxRefreshFeedback(result));
+      const feedback = buildFxRefreshFeedback(result);
+      pushActionToast(
+        getFxRefreshFeedbackVariant(feedback.tone),
+        text.fxRefreshResult,
+        feedback.text,
+      );
     } catch (err) {
       if (!isActiveRefreshContext(requestedViewKey, requestedRequestId)) {
         return;
       }
-      setError(getParsedApiError(err));
+      pushActionErrorToast(err, '刷新失败');
     } finally {
       if (isActiveRefreshContext(requestedViewKey, requestedRequestId)) {
         setFxRefreshing(false);
@@ -995,8 +1053,6 @@ const PortfolioPage: React.FC = () => {
                   className="btn-secondary text-sm whitespace-nowrap"
                   onClick={() => {
                     setShowCreateAccount((prev) => !prev);
-                    setAccountCreateError(null);
-                    setAccountCreateSuccess(null);
                   }}
                 >
                   {showCreateAccount ? text.collapseCreate : text.createAccount}
@@ -1037,21 +1093,6 @@ const PortfolioPage: React.FC = () => {
           message={riskWarning}
         />
       ) : null}
-      {writeWarning ? (
-        <InlineAlert
-          variant="warning"
-          title={text.operationHint}
-          message={writeWarning}
-        />
-      ) : null}
-      {positionAnalysisMessage ? (
-        <InlineAlert
-          variant="success"
-          title={text.analysisTask}
-          message={positionAnalysisMessage}
-        />
-      ) : null}
-
       {(showCreateAccount || !hasAccounts) ? (
         <Card padding="md">
           <div className="flex items-center justify-between gap-2">
@@ -1062,8 +1103,6 @@ const PortfolioPage: React.FC = () => {
                 className="btn-secondary text-xs px-3 py-1"
                 onClick={() => {
                   setShowCreateAccount(false);
-                  setAccountCreateError(null);
-                  setAccountCreateSuccess(null);
                 }}
               >
                 收起
@@ -1072,22 +1111,6 @@ const PortfolioPage: React.FC = () => {
               <span className="text-xs text-secondary">创建后自动切换到该账户</span>
             )}
           </div>
-          {accountCreateError ? (
-            <InlineAlert
-              variant="danger"
-              className="mt-2 rounded-lg px-2 py-1 text-xs shadow-none"
-              title="创建账户失败"
-              message={accountCreateError}
-            />
-          ) : null}
-          {accountCreateSuccess ? (
-            <InlineAlert
-              variant="success"
-              className="mt-2 rounded-lg px-2 py-1 text-xs shadow-none"
-              title="创建账户成功"
-              message={accountCreateSuccess}
-            />
-          ) : null}
           <form className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2" onSubmit={handleCreateAccount}>
             <input
               className={`${PORTFOLIO_INPUT_CLASS} md:col-span-2`}
@@ -1138,15 +1161,15 @@ const PortfolioPage: React.FC = () => {
       <section className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
         <Card variant="gradient" padding="md">
           <p className="text-xs text-secondary">{text.totalEquity}</p>
-          <p className="mt-1 text-xl font-semibold text-foreground">{formatMoney(snapshot?.totalEquity, snapshot?.currency || 'CNY')}</p>
+          <p className="mt-1 text-xl font-semibold text-foreground">{formatMoney(summaryMetrics.totalEquity, summaryMetrics.currency)}</p>
         </Card>
         <Card variant="gradient" padding="md">
           <p className="text-xs text-secondary">{text.totalMarketValue}</p>
-          <p className="mt-1 text-xl font-semibold text-foreground">{formatMoney(snapshot?.totalMarketValue, snapshot?.currency || 'CNY')}</p>
+          <p className="mt-1 text-xl font-semibold text-foreground">{formatMoney(summaryMetrics.totalMarketValue, summaryMetrics.currency)}</p>
         </Card>
         <Card variant="gradient" padding="md">
           <p className="text-xs text-secondary">{text.totalCash}</p>
-          <p className="mt-1 text-xl font-semibold text-foreground">{formatMoney(snapshot?.totalCash, snapshot?.currency || 'CNY')}</p>
+          <p className="mt-1 text-xl font-semibold text-foreground">{formatMoney(summaryMetrics.totalCash, summaryMetrics.currency)}</p>
         </Card>
         <Card variant="gradient" padding="md">
           <div className="flex items-start justify-between gap-3">
@@ -1160,15 +1183,7 @@ const PortfolioPage: React.FC = () => {
               {fxRefreshing ? text.refreshing : text.refreshFx}
             </button>
           </div>
-          <div className="mt-2">{snapshot?.fxStale ? <Badge variant="warning">{text.stale}</Badge> : <Badge variant="success">{text.latest}</Badge>}</div>
-          {fxRefreshFeedback ? (
-            <InlineAlert
-              variant={getFxRefreshFeedbackVariant(fxRefreshFeedback.tone)}
-              title={text.fxRefreshResult}
-              message={fxRefreshFeedback.text}
-              className="mt-3 rounded-xl px-3 py-2 text-xs shadow-none"
-            />
-          ) : null}
+          <div className="mt-2">{summaryMetrics.fxStale ? <Badge variant="warning">{text.stale}</Badge> : <Badge variant="success">{text.latest}</Badge>}</div>
         </Card>
       </section>
 
@@ -1333,7 +1348,7 @@ const PortfolioPage: React.FC = () => {
           <h3 className="text-sm font-semibold text-foreground mb-2">{text.scope}</h3>
           <div className="text-xs text-secondary space-y-1">
             <div>{text.accountCount}: {snapshot?.accountCount ?? 0}</div>
-            <div>{text.currency}: {snapshot?.currency || 'CNY'}</div>
+            <div>{text.currency}: {summaryMetrics.currency}</div>
             <div>{text.costMethodShort}: {(snapshot?.costMethod || costMethod).toUpperCase()}</div>
           </div>
         </Card>
@@ -1671,6 +1686,18 @@ const PortfolioPage: React.FC = () => {
           }
         }}
       />
+      {actionToast ? (
+        <ToastViewport className="bottom-auto left-1/2 right-auto top-5 w-[min(640px,calc(100vw-24px))] max-w-[calc(100vw-24px)] -translate-x-1/2 items-center">
+          <div className="pointer-events-auto w-full">
+            <InlineAlert
+              variant={actionToast.variant}
+              title={actionToast.title}
+              message={actionToast.message}
+              className="rounded-xl px-3 py-2 text-xs shadow-soft-card"
+            />
+          </div>
+        </ToastViewport>
+      ) : null}
     </div>
   );
 };

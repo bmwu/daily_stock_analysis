@@ -110,7 +110,8 @@ export function TradingChart({ data, mode, theme }: { data: MarketRadarChart; mo
           ]
         : [0, Math.floor((count - 1) / 2), count - 1].map((index) => ({
             x: xFor(index),
-            label: candles[index]?.date.slice(5) ?? "—",
+            // Empty date must fall through to "—"; "".slice(5) is still "" and would hide labels.
+            label: (candles[index]?.date || "").slice(5) || "—",
             align: index === 0 ? "left" : index === count - 1 ? "right" : "center",
           }));
       xLabels.forEach(({ x, label, align }) => {
