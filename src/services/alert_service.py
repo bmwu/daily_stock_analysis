@@ -169,6 +169,13 @@ class AlertService:
             "page_size": page_size,
         }
 
+    def list_rule_targets(self) -> Dict[str, Any]:
+        items = [
+            {"target": target, "target_scope": target_scope}
+            for target, target_scope in self.repo.list_distinct_rule_targets()
+        ]
+        return {"items": items}
+
     def test_rule(self, rule_id: int) -> Dict[str, Any]:
         row = self.repo.get_rule(rule_id)
         if row is None:

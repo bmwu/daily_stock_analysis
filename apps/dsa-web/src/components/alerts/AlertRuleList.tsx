@@ -15,7 +15,7 @@ import {
   ALERT_TYPE_FILTER_OPTIONS,
   ALERT_TYPE_LABELS,
 } from '../../locales/featureText';
-import type { AlertRuleItem, AlertType, MarketRegion } from '../../types/alerts';
+import type { AlertRuleItem, AlertRuleTargetOption, AlertType, MarketRegion } from '../../types/alerts';
 import { formatDateTime } from '../../utils/format';
 
 export type AlertRuleEnabledFilter = 'all' | 'enabled' | 'disabled';
@@ -73,7 +73,7 @@ function isCoolingDown(rule: AlertRuleItem): boolean {
   return rule.cooldownActive === true;
 }
 
-function formatTarget(rule: AlertRuleItem, language: UiLanguage): string {
+function formatTarget(rule: Pick<AlertRuleItem, 'target' | 'targetScope'>, language: UiLanguage): string {
   if (rule.targetScope === 'market') return ALERT_MARKET_REGION_LABELS[language][rule.target as MarketRegion] ?? rule.target;
   if (rule.targetScope === 'watchlist') return 'default';
   if (rule.targetScope === 'portfolio_account' || rule.targetScope === 'portfolio_holdings') {
@@ -98,8 +98,11 @@ interface AlertRuleListProps {
   isLoading?: boolean;
   enabledFilter: AlertRuleEnabledFilter;
   alertTypeFilter: AlertTypeFilter;
+  targetFilter: string;
+  targetOptions: AlertRuleTargetOption[];
   onEnabledFilterChange: (value: AlertRuleEnabledFilter) => void;
   onAlertTypeFilterChange: (value: AlertTypeFilter) => void;
+  onTargetFilterChange: (value: string) => void;
   onPageChange: (page: number) => void;
   onToggleEnabled: (rule: AlertRuleItem) => void;
   onDelete: (rule: AlertRuleItem) => void;
@@ -116,8 +119,11 @@ export const AlertRuleList: React.FC<AlertRuleListProps> = ({
   isLoading = false,
   enabledFilter,
   alertTypeFilter,
+  targetFilter,
+  targetOptions,
   onEnabledFilterChange,
   onAlertTypeFilterChange,
+  onTargetFilterChange,
   onPageChange,
   onToggleEnabled,
   onDelete,
@@ -132,6 +138,13 @@ export const AlertRuleList: React.FC<AlertRuleListProps> = ({
   const isRuleActionBusy = (rule: AlertRuleItem, action: AlertRuleBusyAction) => (
     busyRule?.id === rule.id && busyRule.action === action
   );
+  const targetSelectOptions = [
+    { value: '', label: text.targetFilterAll },
+    ...targetOptions.map((item) => ({
+      value: item.target,
+      label: formatTarget({ target: item.target, targetScope: item.targetScope as AlertRuleItem['targetScope'] }, language),
+    })),
+  ];
 
   return (
     <Card
@@ -139,7 +152,7 @@ export const AlertRuleList: React.FC<AlertRuleListProps> = ({
       padding="md"
       className={className}
     >
-      <div className="mb-4 grid gap-3 md:grid-cols-2">
+      <div className="mb-4 grid gap-3 md:grid-cols-3">
         <Select
           label={text.enabledFilter}
           value={enabledFilter}
@@ -155,6 +168,12 @@ export const AlertRuleList: React.FC<AlertRuleListProps> = ({
           onChange={(value) => {
             onAlertTypeFilterChange(value as AlertTypeFilter);
           }}
+        />
+        <Select
+          label={text.targetFilter}
+          value={targetFilter}
+          options={targetSelectOptions}
+          onChange={onTargetFilterChange}
         />
       </div>
 

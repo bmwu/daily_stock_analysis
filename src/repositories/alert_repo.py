@@ -79,7 +79,7 @@ class AlertRepository:
         if target_scope:
             conditions.append(AlertRuleRecord.target_scope == target_scope)
         if target:
-            conditions.append(AlertRuleRecord.target == target)
+            conditions.append(AlertRuleRecord.target == str(target).strip())
         if source:
             conditions.append(AlertRuleRecord.source == source)
 
@@ -97,6 +97,23 @@ class AlertRepository:
                 .limit(page_size)
             ).scalars().all()
             return list(rows), int(total)
+
+    def list_distinct_rule_targets(self) -> List[Tuple[str, str]]:
+        """Return distinct rule targets with one representative scope for labeling."""
+        with self.db.get_session() as session:
+            rows = session.execute(
+                select(AlertRuleRecord.target, AlertRuleRecord.target_scope)
+                .distinct()
+                .order_by(AlertRuleRecord.target.asc(), AlertRuleRecord.target_scope.asc())
+            ).all()
+
+        seen: Dict[str, str] = {}
+        for target, target_scope in rows:
+            key = str(target or "").strip()
+            if not key or key in seen:
+                continue
+            seen[key] = str(target_scope or "single_symbol")
+        return [(target, scope) for target, scope in seen.items()]
 
     def list_enabled_rules(self, *, limit: int = 1000) -> List[AlertRuleRecord]:
         safe_limit = max(1, min(int(limit), 1000))

@@ -67,6 +67,15 @@ class AlertRuleListResponse(BaseModel):
     page_size: int
 
 
+class AlertRuleTargetOption(BaseModel):
+    target: str
+    target_scope: str
+
+
+class AlertRuleTargetListResponse(BaseModel):
+    items: List[AlertRuleTargetOption] = Field(default_factory=list)
+
+
 class AlertDeleteResponse(BaseModel):
     deleted: int
 

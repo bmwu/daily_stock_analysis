@@ -5,6 +5,7 @@ import AlertsPage from '../AlertsPage';
 
 const {
   listRules,
+  listRuleTargets,
   createRule,
   deleteRule,
   enableRule,
@@ -14,6 +15,7 @@ const {
   listNotifications,
 } = vi.hoisted(() => ({
   listRules: vi.fn(),
+  listRuleTargets: vi.fn(),
   createRule: vi.fn(),
   deleteRule: vi.fn(),
   enableRule: vi.fn(),
@@ -26,6 +28,7 @@ const {
 vi.mock('../../api/alerts', () => ({
   alertsApi: {
     listRules,
+    listRuleTargets,
     createRule,
     deleteRule,
     enableRule,
@@ -108,6 +111,7 @@ function createDeferred<T>() {
 beforeEach(() => {
   vi.clearAllMocks();
   listRules.mockResolvedValue({ items: [rule], total: 1, page: 1, pageSize: 10 });
+  listRuleTargets.mockResolvedValue({ items: [{ target: '600519', targetScope: 'single_symbol' }] });
   listTriggers.mockResolvedValue({
     items: [
       {
@@ -159,6 +163,7 @@ describe('AlertsPage', () => {
     expect(listRules).toHaveBeenCalledWith({
       enabled: undefined,
       alertType: undefined,
+      target: undefined,
       page: 1,
       pageSize: 10,
     });
@@ -300,6 +305,7 @@ describe('AlertsPage', () => {
       expect(listRules).toHaveBeenCalledWith({
         enabled: undefined,
         alertType: undefined,
+        target: undefined,
         page: 1,
         pageSize: 10,
       });
@@ -332,6 +338,31 @@ describe('AlertsPage', () => {
     initialRequest.resolve({ items: [staleRule], total: 1, page: 1, pageSize: 10 });
     await waitFor(() => expect(screen.queryByText('旧筛选规则')).not.toBeInTheDocument());
     expect(screen.getByText('停用规则')).toBeInTheDocument();
+  });
+
+  it('filters rules by selecting an existing target', async () => {
+    listRuleTargets.mockRejectedValueOnce(new Error('targets endpoint unavailable'));
+
+    render(
+      <MemoryRouter>
+        <AlertsPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('茅台价格突破')).toBeInTheDocument();
+    await waitFor(() => expect(listRuleTargets).toHaveBeenCalled());
+    await waitFor(() => expect(listRules).toHaveBeenCalledWith({
+      page: 1,
+      pageSize: 100,
+    }));
+    fireEvent.change(await screen.findByLabelText('目标'), { target: { value: '600519' } });
+    await waitFor(() => expect(listRules).toHaveBeenCalledWith({
+      enabled: undefined,
+      alertType: undefined,
+      target: '600519',
+      page: 1,
+      pageSize: 10,
+    }));
   });
 
   it('switches between rules, triggers, and notifications tabs', async () => {

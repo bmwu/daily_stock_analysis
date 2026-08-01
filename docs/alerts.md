@@ -129,6 +129,7 @@ P1 新增后端 Alert API 与 schema，锁定告警中心最小 API 契约，不
 - 新增 schema 文件：`api/v1/schemas/alerts.py`。
 - API 范围：
   - `GET /api/v1/alerts/rules`
+  - `GET /api/v1/alerts/rules/targets`
   - `POST /api/v1/alerts/rules`
   - `GET /api/v1/alerts/rules/{rule_id}`
   - `PATCH /api/v1/alerts/rules/{rule_id}`
@@ -175,7 +176,7 @@ P2 不做：
 
 P3 在 WebUI 中新增 `/alerts` 告警中心入口，让用户不需要直接编辑 legacy JSON 即可管理当前三类运行时规则。
 
-- 侧边栏新增“告警”入口，页面支持规则列表、分页、启停筛选和规则类型筛选。
+- 侧边栏新增“告警”入口，页面支持规则列表、分页、启停筛选、规则类型筛选和目标下拉筛选。
 - 规则创建表单只支持 `single_symbol` 目标范围和当前已可执行的三类规则：
   - `price_cross`：`direction` 为 `above` / `below`，并填写 `price`。
   - `price_change_percent`：`direction` 为 `up` / `down`，并填写 `change_pct`。
@@ -417,7 +418,7 @@ P8 不新增规则类型、API、表结构或 worker 行为；它把 P0-P7 已�
 
 ### Web 与 Desktop
 
-Web 告警中心 `/alerts` 是持久化规则的主要入口：以「告警规则 / 触发历史 / 通知尝试记录」三个 Tab 组织；可创建、启停、删除规则，执行一次性 dry-run 测试，查看触发历史、通知尝试和只读冷却状态。批量规则的列表冷却状态是父规则摘要，子目标是否冷却以触发历史中的 `target` / `effective_target` 为准。
+Web 告警中心 `/alerts` 是持久化规则的主要入口：以「告警规则 / 触发历史 / 通知尝试记录」三个 Tab 组织；可创建、启停、删除规则，按目标下拉筛选规则，执行一次性 dry-run 测试，查看触发历史、通知尝试和只读冷却状态。批量规则的列表冷却状态是父规则摘要，子目标是否冷却以触发历史中的 `target` / `effective_target` 为准。
 
 Desktop 不新增原生告警管理界面；桌面用户复用内置或外部 WebUI 的 `/alerts` 页面。Desktop 回滚不需要清理额外状态。
 

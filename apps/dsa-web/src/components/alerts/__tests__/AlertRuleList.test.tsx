@@ -55,6 +55,7 @@ const rules: AlertRuleItem[] = [
 describe('AlertRuleList', () => {
   const onEnabledFilterChange = vi.fn();
   const onAlertTypeFilterChange = vi.fn();
+  const onTargetFilterChange = vi.fn();
   const onPageChange = vi.fn();
   const onToggleEnabled = vi.fn();
   const onDelete = vi.fn();
@@ -74,8 +75,11 @@ describe('AlertRuleList', () => {
         pageSize={20}
         enabledFilter="all"
         alertTypeFilter="all"
+        targetFilter=""
+        targetOptions={[{ target: '600519', targetScope: 'single_symbol' }, { target: '300750', targetScope: 'single_symbol' }]}
         onEnabledFilterChange={onEnabledFilterChange}
         onAlertTypeFilterChange={onAlertTypeFilterChange}
+        onTargetFilterChange={onTargetFilterChange}
         onPageChange={onPageChange}
         onToggleEnabled={onToggleEnabled}
         onDelete={onDelete}
@@ -96,8 +100,11 @@ describe('AlertRuleList', () => {
           pageSize={20}
           enabledFilter="all"
           alertTypeFilter="all"
+          targetFilter=""
+          targetOptions={[{ target: '600519', targetScope: 'single_symbol' }, { target: '300750', targetScope: 'single_symbol' }]}
           onEnabledFilterChange={onEnabledFilterChange}
           onAlertTypeFilterChange={onAlertTypeFilterChange}
+          onTargetFilterChange={onTargetFilterChange}
           onPageChange={onPageChange}
           onToggleEnabled={onToggleEnabled}
           onDelete={onDelete}
@@ -112,7 +119,7 @@ describe('AlertRuleList', () => {
     renderList();
 
     expect(screen.getByText('茅台价格突破')).toBeInTheDocument();
-    expect(screen.getByText('600519')).toBeInTheDocument();
+    expect(screen.getAllByText('600519').length).toBeGreaterThan(0);
     expect(screen.getAllByText('价格突破').length).toBeGreaterThan(0);
     expect(screen.getByText('上破 1800')).toBeInTheDocument();
     expect(screen.getAllByText('MACD 金叉/死叉').length).toBeGreaterThan(0);
@@ -122,10 +129,12 @@ describe('AlertRuleList', () => {
 
     fireEvent.change(screen.getByLabelText('启停状态'), { target: { value: 'enabled' } });
     fireEvent.change(screen.getByLabelText('规则类型'), { target: { value: 'price_cross' } });
+    fireEvent.change(screen.getByLabelText('目标'), { target: { value: '600519' } });
     fireEvent.click(screen.getByRole('button', { name: '2' }));
 
     expect(onEnabledFilterChange).toHaveBeenCalledWith('enabled');
     expect(onAlertTypeFilterChange).toHaveBeenCalledWith('price_cross');
+    expect(onTargetFilterChange).toHaveBeenCalledWith('600519');
     expect(onPageChange).toHaveBeenCalledWith(2);
   });
 
@@ -198,6 +207,7 @@ describe('AlertRuleList', () => {
       ],
     });
 
+    expect(screen.getByLabelText('Target')).toBeInTheDocument();
     expect(screen.getByRole('option', { name: 'All statuses' })).toBeInTheDocument();
     expect(screen.getAllByText('Portfolio drawdown').length).toBeGreaterThan(0);
     expect(screen.getByText('Portfolio account')).toBeInTheDocument();

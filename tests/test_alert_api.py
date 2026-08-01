@@ -248,6 +248,44 @@ class AlertApiTestCase(unittest.TestCase):
         self.assertEqual(payload["items"][0]["target"], "300750")
         self.assertEqual(payload["items"][0]["parameters"]["change_pct"], 3.5)
 
+    def test_list_rule_targets_and_exact_target_filter(self) -> None:
+        self._create_rule()
+        self._create_rule(
+            {
+                "name": "CATL drop",
+                "target": "300750",
+                "alert_type": "price_change_percent",
+                "parameters": {"direction": "down", "change_pct": 3.5},
+            }
+        )
+        self._create_rule(
+            {
+                "name": "Duplicate moutai",
+                "target": "600519",
+                "alert_type": "volume_spike",
+                "parameters": {"multiplier": 2.0},
+            }
+        )
+
+        targets = self.client.get("/api/v1/alerts/rules/targets")
+        self.assertEqual(targets.status_code, 200, targets.text)
+        target_items = targets.json()["items"]
+        self.assertEqual(
+            sorted(item["target"] for item in target_items),
+            ["300750", "600519"],
+        )
+        self.assertTrue(all("target_scope" in item for item in target_items))
+
+        resp = self.client.get("/api/v1/alerts/rules", params={"target": "600519"})
+        self.assertEqual(resp.status_code, 200, resp.text)
+        payload = resp.json()
+        self.assertEqual(payload["total"], 2)
+        self.assertTrue(all(item["target"] == "600519" for item in payload["items"]))
+
+        missing = self.client.get("/api/v1/alerts/rules", params={"target": "600"})
+        self.assertEqual(missing.status_code, 200, missing.text)
+        self.assertEqual(missing.json()["total"], 0)
+
     def test_create_p5_technical_indicator_rules(self) -> None:
         cases = [
             ("ma_price_cross", {"direction": "above", "window": 20}),

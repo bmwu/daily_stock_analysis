@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [修复] LiteLLM 用量归因：无 `usage.provider` 时按路由 `custom_llm_provider` / 模型族推断，避免无前缀模型（如经 Anthropic 入口的 `MiniMax-M3`）误记为 `openai`。
+- [改进] 告警规则列表支持按已有规则目标下拉筛选。
 - [改进] 告警触发历史加宽状态/观察值/阈值/数据时间列，并对质量、限制、数据源与常见原因做中文展示。
 - [改进] 告警中心改为「告警规则 / 触发历史 / 通知尝试记录」三 Tab；Tab 内容区不再重复同名卡片标题。
 - [改进] 告警规则列表底部左侧显示总数、右侧分页器，去掉卡片标题旁的 total。
