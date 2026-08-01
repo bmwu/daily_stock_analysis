@@ -1,5 +1,5 @@
 import type React from 'react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTheme } from 'next-themes';
 import { ApiErrorAlert, InlineAlert } from '../components/common';
@@ -45,6 +45,17 @@ function formatRadarPrice(item: MarketRadarInstrument): string {
     return item.quoteSource ? '暂无行情' : '—';
   }
   return number2.format(n(item.price));
+}
+
+function signalsAvailable(item: MarketRadarInstrument): boolean {
+  return item.signalsAvailable !== false;
+}
+
+function signalCountLabel(item: MarketRadarInstrument): string {
+  if (!signalsAvailable(item)) {
+    return '信号暂不可用';
+  }
+  return `${(item.signals || []).length}信号`;
 }
 
 
@@ -133,6 +144,14 @@ const MarketRadarPage: React.FC = () => {
 
   const active = collection.find((item) => item.code === selected) ?? collection[0] ?? null;
   const { data: chartData, loading: chartLoading, error: chartError } = useMarketRadarChart(active?.code ?? null);
+
+  useEffect(() => {
+    if (!active?.code) return;
+    // Non-A shares have no reliable intraday yet — prefer daily candles.
+    if (!/^\d{6}$/.test(active.code)) {
+      setChartMode('kline');
+    }
+  }, [active?.code]);
 
   function toggleSort(key: SortKey) {
     setSort((current) =>
@@ -249,6 +268,15 @@ const MarketRadarPage: React.FC = () => {
             <span className={refreshing ? 'spin' : ''}>↻</span>
             {refreshing ? '刷新中' : '刷新行情'}
           </button>
+          <button
+            type="button"
+            className="index-more-button"
+            onClick={() => setIndexDrawerOpen(true)}
+            aria-label="更多指数"
+          >
+            更多指数
+            <small>{indexCatalog.length || '—'}</small>
+          </button>
         </header>
 
         {error ? (
@@ -277,25 +305,6 @@ const MarketRadarPage: React.FC = () => {
               </div>
             </article>
           ))}
-          <button
-            type="button"
-            className="index-card index-more-card"
-            onClick={() => setIndexDrawerOpen(true)}
-            aria-label="更多指数"
-          >
-            <div className="index-title">
-              <span>更多指数</span>
-              <small>设置常用</small>
-            </div>
-            <div className="index-main">
-              <strong>+</strong>
-              <span className="neutral">{indexCatalog.length} 只可选</span>
-            </div>
-            <div className="index-foot">
-              <span>跨市场全表</span>
-              <span>抽屉管理</span>
-            </div>
-          </button>
           <article className="index-card account-summary">
             <div className="index-title">
               <span>账户概览</span>
@@ -413,16 +422,18 @@ const MarketRadarPage: React.FC = () => {
                       <small>
                         <i
                           className={
-                            (item.signals || []).some((s) => s.level === 'green')
-                              ? 'green'
-                              : (item.signals || []).some((s) => s.level === 'orange')
-                                ? 'orange'
-                                : (item.signals || []).some((s) => s.level === 'red')
-                                  ? 'red'
-                                  : 'blue'
+                            !signalsAvailable(item)
+                              ? 'blue'
+                              : (item.signals || []).some((s) => s.level === 'green')
+                                ? 'green'
+                                : (item.signals || []).some((s) => s.level === 'orange')
+                                  ? 'orange'
+                                  : (item.signals || []).some((s) => s.level === 'red')
+                                    ? 'red'
+                                    : 'blue'
                           }
                         />
-                        {(item.signals || []).length}信号
+                        {signalCountLabel(item)}
                       </small>
                     </span>
                   </button>
@@ -545,18 +556,20 @@ const MarketRadarPage: React.FC = () => {
                       <span>
                         <b
                           className={
-                            (item.signals || []).some((s) => s.level === 'green')
-                              ? 'alert-count green'
-                              : (item.signals || []).some((s) => s.level === 'orange')
-                                ? 'alert-count orange'
-                                : (item.signals || []).some((s) => s.level === 'red')
-                                  ? 'alert-count red'
-                                  : 'alert-count blue'
+                            !signalsAvailable(item)
+                              ? 'alert-count blue'
+                              : (item.signals || []).some((s) => s.level === 'green')
+                                ? 'alert-count green'
+                                : (item.signals || []).some((s) => s.level === 'orange')
+                                  ? 'alert-count orange'
+                                  : (item.signals || []).some((s) => s.level === 'red')
+                                    ? 'alert-count red'
+                                    : 'alert-count blue'
                           }
                         >
-                          {(item.signals || []).length}
+                          {signalsAvailable(item) ? (item.signals || []).length : '—'}
                         </b>
-                        <small>条命中</small>
+                        <small>{signalsAvailable(item) ? '条命中' : '信号暂不可用'}</small>
                       </span>
                     </button>
                   );
@@ -631,7 +644,11 @@ const MarketRadarPage: React.FC = () => {
                   && (chartMode === 'intraday' ? chartData.intraday.length <= 1 : chartData.candles.length <= 1) ? (
                     <div className="chart-state">
                       <span>—</span>
-                      <b>当前图表数据不足</b>
+                      <b>
+                        {chartMode === 'intraday' && (chartData.degraded || []).some((d) => d.includes('intraday'))
+                          ? '当前市场暂无分时，可切换日K'
+                          : '当前图表数据不足'}
+                      </b>
                     </div>
                   ) : null}
                 {!active ? <DemoChart /> : null}
@@ -816,8 +833,16 @@ const MarketRadarPage: React.FC = () => {
                 {!loading && visibleSignals.length === 0 ? (
                   <div className="empty-state">
                     <span>✓</span>
-                    <b>{active?.name ?? '当前股票'}暂无该级别新增信号</b>
-                    <small>切换左侧股票可查看对应异动；行情每30秒刷新</small>
+                    <b>
+                      {active && !signalsAvailable(active)
+                        ? `${active.name}信号暂不可用`
+                        : `${active?.name ?? '当前股票'}暂无该级别新增信号`}
+                    </b>
+                    <small>
+                      {active && !signalsAvailable(active)
+                        ? '日线数据尚未就绪，报价仍可查看；稍后刷新或切换股票'
+                        : '切换左侧股票可查看对应异动；行情每30秒刷新'}
+                    </small>
                   </div>
                 ) : null}
                 {loading && !data ? (

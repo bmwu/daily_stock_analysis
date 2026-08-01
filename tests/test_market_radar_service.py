@@ -1,13 +1,32 @@
 # -*- coding: utf-8 -*-
-import pytest
-
 from src.services.market_radar_service import MarketRadarService
 
 
-def test_build_chart_rejects_non_ashare_code():
+def test_build_chart_allows_non_ashare_with_daily_fallback(monkeypatch):
     service = MarketRadarService.__new__(MarketRadarService)
-    with pytest.raises(ValueError):
-        service.build_chart("AAPL", mode="intraday")
+
+    class _DataManager:
+        def get_realtime_quote(self, code):
+            return None
+
+    monkeypatch.setattr(
+        "src.services.market_radar_service.fetch_daily_bars_for_code",
+        lambda _dm, code, days=180: [
+            {"date": "2026-07-01", "open": 1, "close": 2, "high": 3, "low": 1, "volume": 10},
+            {"date": "2026-07-02", "open": 2, "close": 2.5, "high": 3, "low": 2, "volume": 11},
+        ],
+    )
+    service.data_manager = _DataManager()
+    kline = service.build_chart("AAPL", mode="kline")
+    assert kline["code"] == "AAPL"
+    assert len(kline["candles"]) == 2
+    assert kline["intraday"] == []
+    assert kline.get("degraded") == []
+
+    both = service.build_chart("AAPL", mode="both")
+    assert len(both["candles"]) == 2
+    assert both["intraday"] == []
+    assert "intraday_unsupported_market" in (both.get("degraded") or [])
 
 
 def test_build_overview_shape(monkeypatch):
@@ -21,7 +40,16 @@ def test_build_overview_shape(monkeypatch):
         def compute_for_codes(self, codes, portfolio_by_code=None, include_bars=True):
             items = []
             for code in codes:
-                items.append({"code": code, "name": code, "signals": [], "price": 1.0, "change_pct": 0.0})
+                items.append(
+                    {
+                        "code": code,
+                        "name": code,
+                        "signals": [],
+                        "price": 1.0,
+                        "change_pct": 0.0,
+                        "signals_available": True,
+                    }
+                )
             return {"items": items, "errors": []}
 
     service.monitor = _Monitor()
@@ -49,7 +77,7 @@ def test_normalize_index_quote_prefers_price_fields():
     assert row["region"] == "hk"
 
 
-def test_build_overview_keeps_non_ashare_watchlist(monkeypatch):
+def test_build_overview_quotes_non_ashare_watchlist(monkeypatch):
     service = MarketRadarService.__new__(MarketRadarService)
 
     monkeypatch.setattr(service, "_load_indices", lambda errors: [])
@@ -58,16 +86,76 @@ def test_build_overview_keeps_non_ashare_watchlist(monkeypatch):
 
     class _Monitor:
         def compute_for_codes(self, codes, portfolio_by_code=None, include_bars=True):
-            items = []
-            for code in codes:
-                items.append({"code": code, "name": code, "signals": [], "price": 1.0, "change_pct": 0.0})
-            return {"items": items, "errors": []}
+            assert "BABA" in codes
+            assert "600519" in codes
+            return {
+                "items": [
+                    {
+                        "code": "600519",
+                        "name": "贵州茅台",
+                        "signals": [],
+                        "price": 1800.0,
+                        "signals_available": True,
+                    },
+                    {
+                        "code": "BABA",
+                        "name": "阿里巴巴",
+                        "signals": [],
+                        "price": 90.0,
+                        "signals_available": False,
+                        "signals_unavailable_reason": "bars_unavailable",
+                        "quote_source": "yfinance",
+                    },
+                ],
+                "errors": [{"code": "BABA", "error": "bars_unavailable"}],
+            }
 
     service.monitor = _Monitor()
     payload = service.build_overview()
     codes = [item["code"] for item in payload["watchlist"]]
     assert codes == ["600519", "BABA"]
     baba = payload["watchlist"][1]
-    assert baba["price"] is None
-    assert baba["quote_source"] == "market_radar_ashare_quotes_only"
+    assert baba["price"] == 90.0
+    assert baba["signals_available"] is False
+    assert baba["quote_source"] == "yfinance"
     assert any(err.get("code") == "BABA" for err in payload["errors"])
+
+
+def test_compute_for_codes_accepts_non_ashare(monkeypatch):
+    from types import SimpleNamespace
+
+    from src.services.trading_signal_monitor import TradingSignalMonitor
+
+    monitor = TradingSignalMonitor.__new__(TradingSignalMonitor)
+
+    class _DataManager:
+        def get_realtime_quotes(self, codes, prefer_tencent_batch=True, log_final_failure=False):
+            return {
+                "AAPL": SimpleNamespace(
+                    name="Apple",
+                    price=100.0,
+                    change_pct=1.0,
+                    change_amount=1.0,
+                    open_price=99.0,
+                    high=101.0,
+                    low=98.0,
+                    pre_close=99.0,
+                    volume=1,
+                    amount=1,
+                    turnover_rate=1,
+                    source="yfinance",
+                )
+            }
+
+    monkeypatch.setattr(
+        "src.services.trading_signal_monitor.fetch_daily_bars_for_code",
+        lambda *_args, **_kwargs: [],
+    )
+    monitor.data_manager = _DataManager()
+    payload = monitor.compute_for_codes(["AAPL"], include_bars=True)
+    assert payload["count"] == 1
+    item = payload["items"][0]
+    assert item["code"] == "AAPL"
+    assert item["price"] == 100.0
+    assert item["signals_available"] is False
+    assert item["signals_unavailable_reason"] == "bars_unavailable"

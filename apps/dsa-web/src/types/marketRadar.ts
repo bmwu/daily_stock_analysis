@@ -29,6 +29,8 @@ export type MarketRadarInstrument = {
   profitPercent?: number | null;
   quoteSource?: string | null;
   signals: MarketRadarSignal[];
+  signalsAvailable?: boolean;
+  signalsUnavailableReason?: string | null;
   ma5?: number | null;
   ma30?: number | null;
   volumeRatio?: number | null;
@@ -110,4 +112,5 @@ export type MarketRadarChart = {
   candles: MarketRadarCandle[];
   provider: string;
   mode?: string;
+  degraded?: string[];
 };

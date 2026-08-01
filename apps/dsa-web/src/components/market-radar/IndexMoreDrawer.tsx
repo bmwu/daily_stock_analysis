@@ -80,6 +80,7 @@ export const IndexMoreDrawer: React.FC<Props> = ({
             </button>
           ))}
         </div>
+        <div className="index-more-meta">{rows.length} 只指数 · 下滑查看全部</div>
         <div className="index-more-list">
           {rows.length === 0 ? (
             <div className="index-more-empty">该分区暂无指数</div>
