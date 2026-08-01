@@ -15,6 +15,7 @@ from data_provider.akshare_fetcher import USER_AGENTS
 from data_provider.base import normalize_stock_code
 from src.services.trading_signal_service import (
     PortfolioSnapshot,
+    TradingSignalResult,
     compute_signals,
 )
 
@@ -56,6 +57,10 @@ def _bars_from_dataframe(df) -> List[Dict[str, float]]:
             item.setdefault(key, item.get("close", 0.0) if key != "volume" else 0.0)
         rows.append(item)
     return rows
+
+
+def _is_cn_ashare_code(code: str) -> bool:
+    return bool(code) and code.isdigit() and len(code) == 6
 
 
 def _listed_symbol(code: str) -> str:
@@ -100,6 +105,33 @@ def fetch_tencent_daily_bars(code: str, *, days: int = 90, timeout: float = 5.0)
         except (TypeError, ValueError):
             continue
     return rows
+
+
+def fetch_daily_bars_for_code(
+    data_manager: DataFetcherManager,
+    code: str,
+    *,
+    days: int = 90,
+) -> List[Dict[str, float]]:
+    """Load daily bars for any market; CN prefers Tencent, then shared get_daily_data."""
+    normalized = normalize_stock_code((code or "").strip())
+    if not normalized:
+        return []
+
+    if _is_cn_ashare_code(normalized):
+        try:
+            bars = fetch_tencent_daily_bars(normalized, days=days, timeout=5.0)
+            if bars:
+                return bars
+        except Exception as exc:
+            logger.info("tencent bars unavailable for %s: %s", normalized, type(exc).__name__)
+
+    try:
+        df, _source = data_manager.get_daily_data(normalized, days=max(30, int(days)))
+        return _bars_from_dataframe(df)
+    except Exception as exc:
+        logger.info("daily bars unavailable for %s: %s", normalized, type(exc).__name__)
+        return []
 
 
 def _portfolio_snapshots_from_payload(snapshot: Optional[Dict[str, Any]]) -> Dict[str, PortfolioSnapshot]:
@@ -159,18 +191,14 @@ class TradingSignalMonitor:
         self.data_manager = data_manager or DataFetcherManager()
 
     def _load_bars_map(self, codes: Sequence[str]) -> Dict[str, List[Dict[str, float]]]:
-        """Parallel Tencent daily bars; skip slow multi-source daily failover on overview path."""
+        """Parallel daily bars for CN/HK/US/...; CN prefers Tencent then get_daily_data."""
         if not codes:
             return {}
         results: Dict[str, List[Dict[str, float]]] = {}
         workers = min(8, max(1, len(codes)))
 
         def _one(code: str):
-            try:
-                return code, fetch_tencent_daily_bars(code, days=90, timeout=5.0)
-            except Exception as exc:
-                logger.info("tencent bars unavailable for %s: %s", code, type(exc).__name__)
-                return code, []
+            return code, fetch_daily_bars_for_code(self.data_manager, code, days=90)
 
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = [pool.submit(_one, code) for code in codes]
@@ -192,8 +220,6 @@ class TradingSignalMonitor:
             code = normalize_stock_code((raw or "").strip())
             if not code or code in seen:
                 continue
-            if not code.isdigit() or len(code) != 6:
-                continue
             seen.add(code)
             normalized.append(code)
 
@@ -209,14 +235,20 @@ class TradingSignalMonitor:
                 errors.append({"code": code, "error": "quote_unavailable"})
                 continue
             bars = bars_map.get(code) or []
+            signals_available = True
+            signals_unavailable_reason = None
             if include_bars and not bars:
+                signals_available = False
+                signals_unavailable_reason = "bars_unavailable"
                 errors.append({"code": code, "error": "bars_unavailable"})
-            result = compute_signals(
-                quote=quote,
-                bars=bars,
-                portfolio=portfolio_by_code.get(code),
-                code=code,
-            )
+                result = TradingSignalResult()
+            else:
+                result = compute_signals(
+                    quote=quote,
+                    bars=bars,
+                    portfolio=portfolio_by_code.get(code),
+                    code=code,
+                )
             port = portfolio_by_code.get(code)
             price = getattr(quote, "price", None)
             try:
@@ -242,11 +274,12 @@ class TradingSignalMonitor:
                 trend = "down"
             else:
                 trend = "mixed"
+            default_asset = "A股" if _is_cn_ashare_code(code) else "other"
             items.append(
                 {
                     "code": code,
                     "name": getattr(quote, "name", "") or "",
-                    "asset_type": getattr(port, "asset_type", None) if port else "A股",
+                    "asset_type": getattr(port, "asset_type", None) if port else default_asset,
                     "price": price_f,
                     "change_pct": getattr(quote, "change_pct", None),
                     "change": getattr(quote, "change_amount", None) or getattr(quote, "change", None),
@@ -265,6 +298,8 @@ class TradingSignalMonitor:
                     "trend": trend,
                     "quote_source": getattr(getattr(quote, "source", None), "value", getattr(quote, "source", None)),
                     **result.to_dict(),
+                    "signals_available": signals_available,
+                    "signals_unavailable_reason": signals_unavailable_reason,
                 }
             )
 

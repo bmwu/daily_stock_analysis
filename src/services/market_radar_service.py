@@ -16,6 +16,7 @@ from data_provider.base import normalize_stock_code
 from src.services.stock_list_parser import split_stock_list
 from src.services.trading_signal_monitor import (
     TradingSignalMonitor,
+    fetch_daily_bars_for_code,
     fetch_tencent_daily_bars,
     portfolio_snapshots_from_service_payload,
 )
@@ -149,6 +150,8 @@ def _unsupported_watchlist_item(code: str, reason: str) -> Dict[str, Any]:
         "turnover": None,
         "signals": [],
         "quote_source": reason,
+        "signals_available": False,
+        "signals_unavailable_reason": reason,
         "trend": "mixed",
         "up_trend": False,
         "down_trend": False,
@@ -166,24 +169,26 @@ class MarketRadarService:
         portfolio_by_code, account = self._load_portfolio(errors)
         watchlist_codes = self._load_watchlist(errors)
 
-        holding_codes = [
-            code for code in portfolio_by_code.keys()
-            if code.isdigit() and len(code) == 6
-        ]
-        watch_codes_a: List[str] = []
-        watch_codes_other: List[str] = []
+        holding_codes: List[str] = []
+        seen_holdings = set()
+        for code in portfolio_by_code.keys():
+            normalized = normalize_stock_code(code)
+            if not normalized or normalized in seen_holdings:
+                continue
+            seen_holdings.add(normalized)
+            holding_codes.append(normalized)
+
+        watch_codes: List[str] = []
         seen_watch = set()
         for raw in watchlist_codes:
             code = normalize_stock_code(raw)
             if not code or code in seen_watch:
                 continue
             seen_watch.add(code)
-            if code.isdigit() and len(code) == 6:
-                watch_codes_a.append(code)
-            else:
-                watch_codes_other.append(code)
-        # One batch quote + parallel bars for union(holdings, A-share watchlist).
-        union_codes = list(dict.fromkeys([*holding_codes, *watch_codes_a]))
+            watch_codes.append(code)
+
+        # Quotes + bars for the full holdings/watchlist universe (all markets).
+        union_codes = list(dict.fromkeys([*holding_codes, *watch_codes]))
         payload = self.monitor.compute_for_codes(
             union_codes,
             portfolio_by_code=portfolio_by_code,
@@ -198,18 +203,15 @@ class MarketRadarService:
             if isinstance(err, dict):
                 errors.append(err)
 
-        watchlist_items: List[Dict[str, Any]] = []
-        for code in watch_codes_a:
-            item = by_code.get(code)
-            if item is not None:
-                watchlist_items.append(item)
-            else:
-                watchlist_items.append(_unsupported_watchlist_item(code, "quote_unavailable"))
-        for code in watch_codes_other:
-            watchlist_items.append(
-                _unsupported_watchlist_item(code, "market_radar_ashare_quotes_only")
-            )
-            errors.append({"code": code, "error": "market_radar_ashare_quotes_only"})
+        def _resolve_list(codes: List[str]) -> List[Dict[str, Any]]:
+            rows: List[Dict[str, Any]] = []
+            for code in codes:
+                item = by_code.get(code)
+                if item is not None:
+                    rows.append(item)
+                else:
+                    rows.append(_unsupported_watchlist_item(code, "quote_unavailable"))
+            return rows
 
         return {
             "updated_at": _now_iso(),
@@ -217,26 +219,23 @@ class MarketRadarService:
             "indices": indices,
             "index_catalog": index_catalog_payload(),
             "account": account,
-            "holdings": [by_code[c] for c in holding_codes if c in by_code],
-            "watchlist": watchlist_items,
+            "holdings": _resolve_list(holding_codes),
+            "watchlist": _resolve_list(watch_codes),
             "errors": errors,
         }
 
     def build_chart(self, code: str, mode: str = "intraday") -> Dict[str, Any]:
         normalized = normalize_stock_code((code or "").strip())
-        if not normalized.isdigit() or len(normalized) != 6:
-            raise ValueError("仅支持 6 位 A 股/ETF 代码的分时与 K 线")
+        if not normalized:
+            raise ValueError("股票代码无效")
 
         mode_norm = (mode or "intraday").strip().lower()
         if mode_norm not in {"intraday", "kline", "both"}:
             raise ValueError("mode must be intraday|kline|both")
 
-        symbol = _listed_symbol(normalized)
-        headers = {
-            "User-Agent": random.choice(USER_AGENTS),
-            "Referer": "https://gu.qq.com/",
-            "Accept": "application/json,text/plain,*/*",
-        }
+        is_cn = normalized.isdigit() and len(normalized) == 6
+        providers: List[str] = []
+        degraded: List[str] = []
 
         intraday: List[Dict[str, Any]] = []
         candles: List[Dict[str, Any]] = []
@@ -246,86 +245,124 @@ class MarketRadarService:
         updated_at = _now_iso()
 
         if mode_norm in {"intraday", "both"}:
-            try:
-                minute_url = f"https://web.ifzq.gtimg.cn/appstock/app/minute/query?code={symbol}"
-                minute_json = requests.get(minute_url, headers=headers, timeout=5).json()
-                minute_node = (minute_json.get("data") or {}).get(symbol) or {}
-                quote_row = ((minute_node.get("qt") or {}).get(symbol) or [])
-                date_text = str(((minute_node.get("data") or {}).get("date")) or "")
-                if len(quote_row) > 4:
-                    try:
-                        previous_close = float(quote_row[4])
-                    except (TypeError, ValueError):
-                        previous_close = 0.0
-                if len(quote_row) > 3:
-                    try:
-                        current_price = float(quote_row[3])
-                    except (TypeError, ValueError):
-                        current_price = 0.0
-                if len(quote_row) > 30:
-                    updated_at = _quote_time_to_iso(quote_row[30])
+            if is_cn:
+                try:
+                    symbol = _listed_symbol(normalized)
+                    headers = {
+                        "User-Agent": random.choice(USER_AGENTS),
+                        "Referer": "https://gu.qq.com/",
+                        "Accept": "application/json,text/plain,*/*",
+                    }
+                    minute_url = f"https://web.ifzq.gtimg.cn/appstock/app/minute/query?code={symbol}"
+                    minute_json = requests.get(minute_url, headers=headers, timeout=5).json()
+                    minute_node = (minute_json.get("data") or {}).get(symbol) or {}
+                    quote_row = ((minute_node.get("qt") or {}).get(symbol) or [])
+                    date_text = str(((minute_node.get("data") or {}).get("date")) or "")
+                    if len(quote_row) > 4:
+                        try:
+                            previous_close = float(quote_row[4])
+                        except (TypeError, ValueError):
+                            previous_close = 0.0
+                    if len(quote_row) > 3:
+                        try:
+                            current_price = float(quote_row[3])
+                        except (TypeError, ValueError):
+                            current_price = 0.0
+                    if len(quote_row) > 30:
+                        updated_at = _quote_time_to_iso(quote_row[30])
 
-                previous_cumulative_volume = 0.0
-                for row in ((minute_node.get("data") or {}).get("data") or []):
-                    parts = str(row).strip().split()
-                    if len(parts) < 3:
-                        continue
-                    time_raw, price_text, volume_text = parts[0], parts[1], parts[2]
-                    amount_text = parts[3] if len(parts) > 3 else "0"
-                    try:
-                        price = float(price_text)
-                        cumulative_volume = float(volume_text)
-                        amount = float(amount_text)
-                    except (TypeError, ValueError):
-                        continue
-                    volume = max(0.0, cumulative_volume - previous_cumulative_volume)
-                    previous_cumulative_volume = cumulative_volume
-                    average = (
-                        amount / cumulative_volume / 100.0
-                        if cumulative_volume > 0 and amount > 0
-                        else price
-                    )
-                    t = time_raw
-                    if len(t) >= 4 and ":" not in t:
-                        t = f"{t[0:2]}:{t[2:4]}"
-                    intraday.append(
-                        {
-                            "time": t,
-                            "price": price,
-                            "average": average,
-                            "volume": volume,
-                            "amount": amount,
-                        }
-                    )
-                if not current_price and intraday:
-                    current_price = float(intraday[-1]["price"])
-            except Exception as exc:
-                logger.info("market radar intraday failed for %s: %s", normalized, type(exc).__name__)
+                    previous_cumulative_volume = 0.0
+                    for row in ((minute_node.get("data") or {}).get("data") or []):
+                        parts = str(row).strip().split()
+                        if len(parts) < 3:
+                            continue
+                        time_raw, price_text, volume_text = parts[0], parts[1], parts[2]
+                        amount_text = parts[3] if len(parts) > 3 else "0"
+                        try:
+                            price = float(price_text)
+                            cumulative_volume = float(volume_text)
+                            amount = float(amount_text)
+                        except (TypeError, ValueError):
+                            continue
+                        volume = max(0.0, cumulative_volume - previous_cumulative_volume)
+                        previous_cumulative_volume = cumulative_volume
+                        average = (
+                            amount / cumulative_volume / 100.0
+                            if cumulative_volume > 0 and amount > 0
+                            else price
+                        )
+                        t = time_raw
+                        if len(t) >= 4 and ":" not in t:
+                            t = f"{t[0:2]}:{t[2:4]}"
+                        intraday.append(
+                            {
+                                "time": t,
+                                "price": price,
+                                "average": average,
+                                "volume": volume,
+                                "amount": amount,
+                            }
+                        )
+                    if not current_price and intraday:
+                        current_price = float(intraday[-1]["price"])
+                    if intraday:
+                        providers.append("tencent_intraday")
+                except Exception as exc:
+                    logger.info("market radar intraday failed for %s: %s", normalized, type(exc).__name__)
+                    degraded.append("intraday_unavailable")
+            else:
+                degraded.append("intraday_unsupported_market")
 
         if mode_norm in {"kline", "both"}:
+            bars: List[Dict[str, Any]] = []
+            if is_cn:
+                try:
+                    bars = fetch_tencent_daily_bars(normalized, days=180, timeout=5.0)
+                    if bars:
+                        providers.append("tencent_kline")
+                except Exception as exc:
+                    logger.info("market radar tencent kline failed for %s: %s", normalized, type(exc).__name__)
+            if not bars:
+                bars = fetch_daily_bars_for_code(self.data_manager, normalized, days=180)
+                if bars:
+                    providers.append("daily_data_kline")
+            for bar in bars[-120:]:
+                candles.append(
+                    {
+                        "date": str(bar.get("date") or "")[:10],
+                        "open": bar.get("open"),
+                        "close": bar.get("close"),
+                        "high": bar.get("high"),
+                        "low": bar.get("low"),
+                        "volume": bar.get("volume"),
+                        "main_net_flow": None,
+                        "large_net_flow": None,
+                        "super_large_net_flow": None,
+                    }
+                )
+            if not previous_close and len(candles) >= 2:
+                previous_close = float(candles[-2]["close"] or 0)
+            if not current_price and candles:
+                current_price = float(candles[-1]["close"] or 0)
+            if mode_norm in {"kline", "both"} and not candles:
+                degraded.append("kline_unavailable")
+
+        if not current_price:
             try:
-                # Fast path: direct Tencent fq kline (same as 持仓雷达).
-                bars = fetch_tencent_daily_bars(normalized, days=180, timeout=5.0)
-                for bar in bars[-120:]:
-                    candles.append(
-                        {
-                            "date": str(bar.get("date") or "")[:10],
-                            "open": bar.get("open"),
-                            "close": bar.get("close"),
-                            "high": bar.get("high"),
-                            "low": bar.get("low"),
-                            "volume": bar.get("volume"),
-                            "main_net_flow": None,
-                            "large_net_flow": None,
-                            "super_large_net_flow": None,
-                        }
-                    )
-                if not previous_close and len(candles) >= 2:
-                    previous_close = float(candles[-2]["close"] or 0)
-                if not current_price and candles:
-                    current_price = float(candles[-1]["close"] or 0)
+                quote = self.data_manager.get_realtime_quote(normalized)
+                if quote is not None and getattr(quote, "price", None) is not None:
+                    current_price = float(quote.price)
+                    if not previous_close:
+                        prev = getattr(quote, "pre_close", None) or getattr(quote, "previous_close", None)
+                        if prev is not None:
+                            previous_close = float(prev)
+                    providers.append("realtime_quote")
             except Exception as exc:
-                logger.info("market radar kline failed for %s: %s", normalized, type(exc).__name__)
+                logger.info("market radar quote fallback failed for %s: %s", normalized, type(exc).__name__)
+
+        provider = "/".join(providers) if providers else "shared-data-provider"
+        if degraded:
+            provider = f"{provider}|degraded:{','.join(degraded)}" if providers else f"degraded:{','.join(degraded)}"
 
         return {
             "code": normalized,
@@ -335,8 +372,9 @@ class MarketRadarService:
             "updated_at": updated_at,
             "intraday": intraday if mode_norm in {"intraday", "both"} else [],
             "candles": candles if mode_norm in {"kline", "both"} else [],
-            "provider": "tencent/shared-data-provider",
+            "provider": provider,
             "mode": mode_norm,
+            "degraded": degraded,
         }
 
     def _load_indices(self, errors: List[Dict[str, str]]) -> List[Dict[str, Any]]:
