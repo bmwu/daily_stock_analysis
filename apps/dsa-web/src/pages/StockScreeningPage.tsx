@@ -633,7 +633,7 @@ const StockScreeningPage: React.FC = () => {
       return;
     }
     const stockName = String(stock.name || stockCode).trim();
-    navigate('/', {
+    navigate('/analysis', {
       state: {
         stockCode,
         stockName,

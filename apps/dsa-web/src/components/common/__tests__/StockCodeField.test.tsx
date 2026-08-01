@@ -101,7 +101,7 @@ describe('StockCodeField', () => {
     );
   });
 
-  it('shows empty watchlist hint with home link', async () => {
+  it('shows empty watchlist hint with diagnose link', async () => {
     getWatchlist.mockResolvedValue([]);
 
     renderField(
@@ -116,7 +116,7 @@ describe('StockCodeField', () => {
     await waitFor(() => {
       expect(screen.getByText(/自选为空/)).toBeInTheDocument();
     });
-    expect(screen.getByRole('link', { name: '去首页添加自选' })).toHaveAttribute('href', '/');
+    expect(screen.getByRole('link', { name: '去诊股添加自选' })).toHaveAttribute('href', '/analysis');
   });
 
   it('renders history and popular extra candidates in groups', async () => {

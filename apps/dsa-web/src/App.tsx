@@ -80,10 +80,11 @@ const AppContent: React.FC = () => {
           </Shell>
         )}
       >
-        <Route path="/" element={<HomePage />} />
+        <Route path="/" element={<MarketRadarPage />} />
+        <Route path="/analysis" element={<HomePage />} />
         <Route path="/chat" element={<ChatPage />} />
         <Route path="/portfolio" element={<PortfolioPage />} />
-        <Route path="/market-radar" element={<MarketRadarPage />} />
+        <Route path="/market-radar" element={<Navigate to="/" replace />} />
         <Route path="/decision-signals" element={<DecisionSignalsPage />} />
         <Route path="/screening" element={<StockScreeningPage />} />
         <Route path="/backtest" element={<BacktestPage />} />

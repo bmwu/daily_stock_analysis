@@ -71,7 +71,7 @@ describe('SidebarNav', () => {
 
     await screen.findByRole('link', { name: '选股' });
     const hrefs = screen.getAllByRole('link').map((link) => link.getAttribute('href'));
-    expect(hrefs.slice(0, 6)).toEqual(['/', '/chat', '/screening', '/portfolio', '/market-radar', '/decision-signals']);
+    expect(hrefs.slice(0, 6)).toEqual(['/', '/analysis', '/chat', '/screening', '/portfolio', '/decision-signals']);
   });
 
   it('refreshes the screening navigation item after any config save event', async () => {

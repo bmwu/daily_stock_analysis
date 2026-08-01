@@ -28,6 +28,10 @@ vi.mock('./stores/agentChatStore', () => ({
 }));
 
 vi.mock('./pages/HomePage', () => ({
+  default: () => <div data-testid="analysis-page">Analysis</div>,
+}));
+
+vi.mock('./pages/MarketRadarPage', () => ({
   default: () => <div data-testid="home-page">Home</div>,
 }));
 

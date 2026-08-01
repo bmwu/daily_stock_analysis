@@ -64,7 +64,7 @@ export function StockCodeField({
   extraCandidates = [],
   enableAutocomplete = true,
   showCandidateChips = true,
-  emptyWatchlistHref = '/',
+  emptyWatchlistHref = '/analysis',
   chipLimitPerSource = 12,
 }: StockCodeFieldProps) {
   const { t } = useUiLanguage();

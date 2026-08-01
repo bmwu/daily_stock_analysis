@@ -42,7 +42,10 @@ async function login(page: Page) {
   // Wait for navigation to home page after login
   await page.waitForURL('/', { timeout: 15_000 });
   await page.waitForLoadState('domcontentloaded');
-  // Wait for page to stabilize by checking for stock input
+  // Analysis workspace moved to 诊股; open it for report smoke flows
+  await page.getByRole('link', { name: '诊股' }).click();
+  await page.waitForURL('/analysis', { timeout: 15_000 });
+  await page.waitForLoadState('domcontentloaded');
   const stockInput = page.getByPlaceholder('输入股票代码或名称，如 600519、贵州茅台、AAPL');
   await expect(stockInput).toBeVisible({ timeout: 10_000 });
 }
@@ -55,7 +58,7 @@ test.describe('ReportMarkdown component', () => {
     await login(page);
 
     // Navigate to history page
-    await page.getByRole('link', { name: '首页' }).click();
+    await page.getByRole('link', { name: '诊股' }).click();
     await page.waitForLoadState('domcontentloaded');
     // Wait for history panel to load
     await expect(page.getByText('历史分析')).toBeVisible({ timeout: 10_000 });
@@ -100,7 +103,7 @@ test.describe('ReportMarkdown component', () => {
     await login(page);
 
     // Navigate to history page
-    await page.getByRole('link', { name: '首页' }).click();
+    await page.getByRole('link', { name: '诊股' }).click();
     await page.waitForLoadState('domcontentloaded');
     // Wait for history panel to load
     await expect(page.getByText('历史分析')).toBeVisible({ timeout: 10_000 });
@@ -182,7 +185,7 @@ test.describe('ReportMarkdown component', () => {
     await login(page);
 
     // Navigate to history page
-    await page.getByRole('link', { name: '首页' }).click();
+    await page.getByRole('link', { name: '诊股' }).click();
     await page.waitForLoadState('domcontentloaded');
     // Wait for history panel to load
     await expect(page.getByText('历史分析')).toBeVisible({ timeout: 10_000 });

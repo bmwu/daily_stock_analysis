@@ -41,7 +41,7 @@
 
 - API：`GET /api/v1/market-radar/overview`、`GET /api/v1/market-radar/chart`
 - Web：`apps/dsa-web/src/pages/MarketRadarPage.tsx` + `components/market-radar/*`
-- 路由：侧边栏「实时大盘」→ `/market-radar`
+- 路由：侧边栏「首页」→ `/`（MarketRadar）；「诊股」→ `/analysis`（原分析工作台）；旧 `/market-radar` 重定向到 `/`
 - 持仓/自选复用现有 Portfolio / watchlist API；持仓管理跳转 `/portfolio`，不用 localStorage 再造账本
 - 仍依赖 `ENABLE_TRADING_SIGNALS=true`
 - 指数区：主条显示本机「常用」指数；顶栏「更多指数」打开抽屉（跨市场全表、按区 Tab 筛选，设/取消常用，localStorage）
