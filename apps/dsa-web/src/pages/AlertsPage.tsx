@@ -259,7 +259,7 @@ const AlertsPage: React.FC = () => {
   };
 
   return (
-    <AppPage className="space-y-5">
+    <AppPage className="max-w-none space-y-5">
       <PageHeader
         eyebrow="Alert Center"
         title="告警中心"
