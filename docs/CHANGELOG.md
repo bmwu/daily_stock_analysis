@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 - [改进] 选股页取消 `max-w-6xl` 限制，与持仓页同宽铺满 Shell 主栏。
 - [改进] 首页右侧内容区取消 `max-w-6xl` / `max-w-4xl` 限制，与持仓页同宽铺满 Shell 主栏。
+- [修复] LiteLLM 用量归因：无 `usage.provider` 时按路由 `custom_llm_provider` / 模型族推断，避免无前缀模型误记为 `openai`。
 - [修复] Agent / 大盘用量落库：`model` 不再用裸 provider（如 `openai`）顶替；Agent 写入 `usage.provider`，大盘 `generate_text` 走 audit 路径写入 provider；Agent 单测默认使用内存库避免污染本地 `stock_analysis.db`。
 - [改进] 告警规则列表支持按已有规则目标下拉筛选。
 - [改进] 告警触发历史加宽状态/观察值/阈值/数据时间列，并对质量、限制、数据源与常见原因做中文展示。
