@@ -1220,7 +1220,7 @@ const PortfolioPage: React.FC = () => {
                     <th className="text-right py-2 pr-2">{text.marketValue}</th>
                     <th className="text-right py-2 pr-3">{text.unrealizedPnl}</th>
                     <th className="text-right py-2 pr-3">{text.returnPct}</th>
-                    <th className="min-w-[9rem] text-right py-2 pr-3">{t('decisionSignals.portfolioColumn')}</th>
+                    <th className="min-w-[9rem] text-center py-2 pr-3">{t('decisionSignals.portfolioColumn')}</th>
                     <th className="w-20 text-right py-2">{text.action}</th>
                   </tr>
                 </thead>
@@ -1264,7 +1264,7 @@ const PortfolioPage: React.FC = () => {
                       >
                         {formatSignedPct(row.unrealizedPnlPct)}
                       </td>
-                      <td className="py-2 pr-3 text-right align-top">
+                      <td className="py-2 pr-3 text-center align-middle">
                         <PortfolioSignalSummary item={signal} loading={portfolioSignalsLoading} />
                       </td>
                       <td className="py-2 text-right">
