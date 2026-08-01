@@ -33,7 +33,8 @@ import type {
 import { formatDateTime } from '../utils/format';
 import { cn } from '../utils/cn';
 
-const PAGE_SIZE = 20;
+const RULES_PAGE_SIZE = 10;
+const HISTORY_PAGE_SIZE = 20;
 
 type AlertsMainTab = 'rules' | 'triggers';
 
@@ -149,13 +150,13 @@ const AlertsPage: React.FC = () => {
     const baseQuery = {
       enabled: enabledFilterToQuery(enabledFilter),
       alertType: alertTypeFilterToQuery(alertTypeFilter),
-      pageSize: PAGE_SIZE,
+      pageSize: RULES_PAGE_SIZE,
     };
     setRulesLoading(true);
     try {
       let response = await alertsApi.listRules({ ...baseQuery, page: requestedPage });
       if (!isLatestRequest()) return null;
-      const lastPage = Math.max(1, Math.ceil(response.total / PAGE_SIZE));
+      const lastPage = Math.max(1, Math.ceil(response.total / RULES_PAGE_SIZE));
       if (response.items.length === 0 && response.total > 0 && requestedPage > lastPage) {
         setRulesPage(lastPage);
         response = await alertsApi.listRules({ ...baseQuery, page: lastPage });
@@ -182,7 +183,7 @@ const AlertsPage: React.FC = () => {
   const loadTriggers = useCallback(async () => {
     setTriggersLoading(true);
     try {
-      const response = await alertsApi.listTriggers({ page: 1, pageSize: PAGE_SIZE });
+      const response = await alertsApi.listTriggers({ page: 1, pageSize: HISTORY_PAGE_SIZE });
       setTriggers(response.items);
       setTriggersError(null);
     } catch (error) {
@@ -195,7 +196,7 @@ const AlertsPage: React.FC = () => {
   const loadNotifications = useCallback(async () => {
     setNotificationsLoading(true);
     try {
-      const response = await alertsApi.listNotifications({ page: 1, pageSize: PAGE_SIZE });
+      const response = await alertsApi.listNotifications({ page: 1, pageSize: HISTORY_PAGE_SIZE });
       setNotifications(response.items);
       setNotificationsError(null);
     } catch (error) {
@@ -351,7 +352,7 @@ const AlertsPage: React.FC = () => {
               rules={rules}
               total={rulesTotal}
               page={rulesPage}
-              pageSize={PAGE_SIZE}
+              pageSize={RULES_PAGE_SIZE}
               isLoading={rulesLoading}
               enabledFilter={enabledFilter}
               alertTypeFilter={alertTypeFilter}
