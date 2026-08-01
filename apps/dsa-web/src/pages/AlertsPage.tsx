@@ -26,6 +26,7 @@ import type {
   AlertNotificationItem,
   AlertRuleCreateRequest,
   AlertRuleItem,
+  AlertRuleTargetOption,
   AlertRuleTestResponse,
   AlertTriggerItem,
   AlertType,
@@ -123,6 +124,8 @@ const AlertsPage: React.FC = () => {
   const [rulesPage, setRulesPage] = useState(1);
   const [enabledFilter, setEnabledFilter] = useState<AlertRuleEnabledFilter>('all');
   const [alertTypeFilter, setAlertTypeFilter] = useState<AlertTypeFilter>('all');
+  const [targetFilter, setTargetFilter] = useState('');
+  const [targetOptions, setTargetOptions] = useState<AlertRuleTargetOption[]>([]);
   const [rulesLoading, setRulesLoading] = useState(false);
   const [rulesError, setRulesError] = useState<ParsedApiError | null>(null);
   const [rulesLoaded, setRulesLoaded] = useState(false);
@@ -150,6 +153,7 @@ const AlertsPage: React.FC = () => {
     const baseQuery = {
       enabled: enabledFilterToQuery(enabledFilter),
       alertType: alertTypeFilterToQuery(alertTypeFilter),
+      target: targetFilter.trim() || undefined,
       pageSize: RULES_PAGE_SIZE,
     };
     setRulesLoading(true);
@@ -178,7 +182,48 @@ const AlertsPage: React.FC = () => {
         setRulesLoading(false);
       }
     }
-  }, [alertTypeFilter, enabledFilter, rulesPage]);
+  }, [alertTypeFilter, enabledFilter, rulesPage, targetFilter]);
+
+  const loadRuleTargets = useCallback(async () => {
+    const applyTargets = (items: AlertRuleTargetOption[]) => {
+      const unique = new Map<string, AlertRuleTargetOption>();
+      for (const item of items) {
+        const target = String(item.target || '').trim();
+        if (!target || unique.has(target)) continue;
+        unique.set(target, {
+          target,
+          targetScope: item.targetScope || 'single_symbol',
+        });
+      }
+      const next = Array.from(unique.values()).sort((left, right) => (
+        left.target.localeCompare(right.target, 'en')
+      ));
+      setTargetOptions(next);
+      setTargetFilter((current) => (
+        current && !next.some((item) => item.target === current) ? '' : current
+      ));
+    };
+
+    try {
+      const response = await alertsApi.listRuleTargets();
+      applyTargets(response.items ?? []);
+      return;
+    } catch {
+      // Older backends may not expose /rules/targets yet; fall back below.
+    }
+
+    try {
+      const response = await alertsApi.listRules({ page: 1, pageSize: 100 });
+      applyTargets(
+        (response.items ?? []).map((rule) => ({
+          target: rule.target,
+          targetScope: rule.targetScope,
+        })),
+      );
+    } catch {
+      // Keep whatever options we already have.
+    }
+  }, []);
 
   const loadTriggers = useCallback(async () => {
     setTriggersLoading(true);
@@ -211,6 +256,28 @@ const AlertsPage: React.FC = () => {
   }, [loadRules]);
 
   useEffect(() => {
+    void loadRuleTargets();
+  }, [loadRuleTargets]);
+
+  useEffect(() => {
+    if (rules.length === 0) return;
+    setTargetOptions((prev) => {
+      const unique = new Map(prev.map((item) => [item.target, item]));
+      let changed = false;
+      for (const rule of rules) {
+        const target = String(rule.target || '').trim();
+        if (!target || unique.has(target)) continue;
+        unique.set(target, { target, targetScope: rule.targetScope });
+        changed = true;
+      }
+      if (!changed) return prev;
+      return Array.from(unique.values()).sort((left, right) => (
+        left.target.localeCompare(right.target, 'en')
+      ));
+    });
+  }, [rules]);
+
+  useEffect(() => {
     if (!rulesLoaded) return;
     void loadTriggers();
     void loadNotifications();
@@ -224,6 +291,7 @@ const AlertsPage: React.FC = () => {
       const created = await alertsApi.createRule(payload);
       setCreateSuccess(`已创建告警规则「${created.name}」`);
       setCreateDrawerOpen(false);
+      await loadRuleTargets();
       await loadRules(1);
       return true;
     } catch (error) {
@@ -254,6 +322,7 @@ const AlertsPage: React.FC = () => {
     setBusyRule({ id: rule.id, action: 'delete' });
     try {
       await alertsApi.deleteRule(rule.id);
+      await loadRuleTargets();
       await loadRules();
     } catch (error) {
       setRulesError(getParsedApiError(error));
@@ -370,12 +439,18 @@ const AlertsPage: React.FC = () => {
               isLoading={rulesLoading}
               enabledFilter={enabledFilter}
               alertTypeFilter={alertTypeFilter}
+              targetFilter={targetFilter}
+              targetOptions={targetOptions}
               onEnabledFilterChange={(value) => {
                 setEnabledFilter(value);
                 setRulesPage(1);
               }}
               onAlertTypeFilterChange={(value) => {
                 setAlertTypeFilter(value);
+                setRulesPage(1);
+              }}
+              onTargetFilterChange={(value) => {
+                setTargetFilter(value);
                 setRulesPage(1);
               }}
               onPageChange={setRulesPage}

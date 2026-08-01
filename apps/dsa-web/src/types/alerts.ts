@@ -153,6 +153,15 @@ export interface AlertNotificationListResponse {
   pageSize: number;
 }
 
+export interface AlertRuleTargetOption {
+  target: string;
+  targetScope: AlertTargetScope | string;
+}
+
+export interface AlertRuleTargetListResponse {
+  items: AlertRuleTargetOption[];
+}
+
 export interface AlertRuleListQuery {
   enabled?: boolean;
   alertType?: AlertType;

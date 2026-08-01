@@ -14,6 +14,7 @@ from api.v1.schemas.alerts import (
     AlertRuleCreateRequest,
     AlertRuleItem,
     AlertRuleListResponse,
+    AlertRuleTargetListResponse,
     AlertRuleTestResponse,
     AlertRuleUpdateRequest,
     AlertTriggerListResponse,
@@ -81,7 +82,7 @@ def list_rules(
     enabled: Optional[bool] = Query(None, description="Optional enabled filter"),
     alert_type: Optional[str] = Query(None, description="Optional alert type filter"),
     target_scope: Optional[str] = Query(None, description="Optional target scope filter"),
-    target: Optional[str] = Query(None, description="Optional target filter"),
+    target: Optional[str] = Query(None, description="Optional exact target filter"),
     source: Optional[str] = Query(None, description="Optional source filter"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
@@ -101,6 +102,20 @@ def list_rules(
         )
     except Exception as exc:
         raise _internal_error("List alert rules failed", exc)
+
+
+@router.get(
+    "/rules/targets",
+    response_model=AlertRuleTargetListResponse,
+    responses={500: {"model": ErrorResponse}},
+    summary="List distinct alert rule targets",
+)
+def list_rule_targets() -> AlertRuleTargetListResponse:
+    service = AlertService()
+    try:
+        return AlertRuleTargetListResponse(**service.list_rule_targets())
+    except Exception as exc:
+        raise _internal_error("List alert rule targets failed", exc)
 
 
 @router.get(

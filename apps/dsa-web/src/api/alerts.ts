@@ -8,6 +8,7 @@ import type {
   AlertRuleItem,
   AlertRuleListQuery,
   AlertRuleListResponse,
+  AlertRuleTargetListResponse,
   AlertRuleTestResponse,
   AlertTriggerListQuery,
   AlertTriggerListResponse,
@@ -87,6 +88,11 @@ export const alertsApi = {
       params: toRuleListParams(query),
     });
     return toCamelCase<AlertRuleListResponse>(response.data);
+  },
+
+  async listRuleTargets(): Promise<AlertRuleTargetListResponse> {
+    const response = await apiClient.get<Record<string, unknown>>('/api/v1/alerts/rules/targets');
+    return toCamelCase<AlertRuleTargetListResponse>(response.data);
   },
 
   async createRule(payload: AlertRuleCreateRequest): Promise<AlertRuleItem> {
