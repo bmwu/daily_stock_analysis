@@ -19,7 +19,10 @@ import math
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-from src.llm.generation_params import resolve_litellm_wire_model
+from src.llm.generation_params import (
+    resolve_litellm_provider_namespace,
+    resolve_litellm_wire_model,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -86,12 +89,10 @@ def normalize_model_name(model: Any) -> str:
 
 def provider_namespace(model: Any) -> str:
     """Return the provider namespace used by LiteLLM-style model strings."""
-    normalized = normalize_model_name(model)
+    normalized = str(model or "").strip()
     if not normalized:
         return ""
-    if "/" in normalized:
-        return normalized.split("/", 1)[0]
-    return "openai"
+    return resolve_litellm_provider_namespace(normalized)
 
 
 def resolved_provider_namespace(
@@ -110,8 +111,10 @@ def resolved_model_provider_identity(
     normalized = str(model or "").strip()
     if not normalized:
         return "", ""
-    wire_model = resolve_litellm_wire_model(normalized, list(model_list or []))
-    return wire_model, provider_namespace(wire_model)
+    model_list_items = list(model_list or [])
+    wire_model = resolve_litellm_wire_model(normalized, model_list_items)
+    provider = resolve_litellm_provider_namespace(normalized, model_list_items)
+    return wire_model, provider
 
 
 def trace_model_matches(
@@ -130,7 +133,14 @@ def trace_model_matches(
         return False
     provider_normalized = normalize_model_name(trace_provider)
     expected_provider = normalize_model_name(current_provider) or provider_namespace(current_model_normalized)
-    return provider_normalized == expected_provider
+    return _trace_providers_equivalent(provider_normalized, expected_provider)
+
+
+def _trace_providers_equivalent(left: str, right: str) -> bool:
+    if left == right:
+        return True
+    openai_like = frozenset({"openai", "openai_compatible"})
+    return left in openai_like and right in openai_like
 
 
 def estimate_protocol_tokens(messages: Sequence[Dict[str, Any]]) -> int:

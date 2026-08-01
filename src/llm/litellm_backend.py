@@ -3,24 +3,40 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from src.llm.generation_backend import (
     GenerationBackend,
     GenerationCapabilities,
     GenerationResult,
 )
+from src.llm.generation_params import resolve_litellm_provider_namespace
 
 
 LiteLLMCallable = Callable[..., Tuple[str, str, Dict[str, Any]]]
 
 
-def _provider_from_model(model: str) -> str:
-    if not model:
-        return ""
-    if "/" in model:
-        return model.split("/", 1)[0]
-    return "openai"
+def _resolve_litellm_provider(
+    model: str,
+    usage: Optional[Dict[str, Any]],
+    *,
+    audit_context: Optional[Dict[str, Any]] = None,
+    generation_config: Optional[Dict[str, Any]] = None,
+) -> str:
+    usage_payload = usage or {}
+    audit = audit_context or {}
+    for candidate in (usage_payload.get("provider"), audit.get("provider")):
+        if candidate:
+            return str(candidate).strip()
+
+    model_list: Optional[List[Dict[str, Any]]] = None
+    for source in (audit, generation_config or {}):
+        raw_list = source.get("model_list")
+        if isinstance(raw_list, list):
+            model_list = raw_list
+            break
+
+    return resolve_litellm_provider_namespace(model, model_list)
 
 
 class LiteLLMGenerationBackend(GenerationBackend):
@@ -59,7 +75,12 @@ class LiteLLMGenerationBackend(GenerationBackend):
             response_validator=response_validator,
             audit_context=audit_context,
         )
-        provider = str((usage or {}).get("provider") or _provider_from_model(model))
+        provider = _resolve_litellm_provider(
+            model,
+            usage,
+            audit_context=audit_context,
+            generation_config=generation_config,
+        )
         return GenerationResult(
             text=text,
             model=model,

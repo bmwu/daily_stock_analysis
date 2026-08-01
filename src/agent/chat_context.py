@@ -331,11 +331,19 @@ def _build_visible_history_state(
             source_message_count=len(to_summarize),
             estimated_tokens=estimated_tokens,
         )
-        usage = getattr(response, "usage", {}) or {}
+        usage = dict(getattr(response, "usage", {}) or {})
+        provider = (getattr(response, "provider", "") or "").strip()
+        if provider and provider not in {"error"} and not usage.get("provider"):
+            usage["provider"] = provider
+        model_for_usage = (
+            (getattr(response, "model", "") or "").strip()
+            or get_effective_agent_primary_model(config)
+            or "unknown"
+        )
         if should_persist_usage_telemetry(usage):
             persist_llm_usage(
                 usage,
-                getattr(response, "model", "") or get_effective_agent_primary_model(config) or "unknown",
+                model_for_usage,
                 call_type="agent",
             )
         messages = [build_summary_message(summary_text)] + _to_chat_messages(protected_tail, include_ids=True)

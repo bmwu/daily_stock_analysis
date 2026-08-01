@@ -584,7 +584,11 @@ def test_summary_compression_persists_invalid_provider_usage_diagnostics() -> No
 
     assert history[0]["content"].startswith(SUMMARY_USER_PREFIX)
     assert usage["cache_observation"] == "invalid_provider_usage"
-    persist_usage.assert_called_once_with(usage, "openai/test-model", call_type="agent")
+    persist_usage.assert_called_once()
+    (payload, model_name), kwargs = persist_usage.call_args
+    assert kwargs.get("call_type") == "agent"
+    assert model_name == "openai/test-model"
+    assert payload["provider"] == "openai"
 
 
 def test_summary_compression_persists_agent_usage_with_provider_usage() -> None:
@@ -613,7 +617,12 @@ def test_summary_compression_persists_agent_usage_with_provider_usage() -> None:
             history = build_visible_chat_history(session_id, adapter, _config(trigger=1, protected=1))
 
     assert history[0]["content"].startswith(SUMMARY_USER_PREFIX)
-    persist_usage.assert_called_once_with(usage, "openai/test-model", call_type="agent")
+    persist_usage.assert_called_once()
+    (payload, model_name), kwargs = persist_usage.call_args
+    assert kwargs.get("call_type") == "agent"
+    assert model_name == "openai/test-model"
+    assert payload["provider"] == "openai"
+    assert payload["total_tokens"] == 3
 
 
 def test_second_request_only_summarizes_incremental_unprotected_messages() -> None:

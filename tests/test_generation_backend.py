@@ -180,6 +180,25 @@ def test_litellm_backend_derives_provider_from_model_when_usage_is_empty() -> No
     assert result.usage == {}
 
 
+def test_litellm_backend_uses_custom_llm_provider_for_slashless_router_models() -> None:
+    model_list = [
+        {
+            "model_name": "MiniMax-M3",
+            "litellm_params": {
+                "model": "MiniMax-M3",
+                "custom_llm_provider": "anthropic",
+            },
+        }
+    ]
+    backend = LiteLLMGenerationBackend(
+        lambda _prompt, _generation_config, **_kwargs: ("ok", "MiniMax-M3", {})
+    )
+
+    result = backend.generate("prompt", {"model_list": model_list})
+
+    assert result.provider == "anthropic"
+
+
 def test_generation_backend_factory_dispatches_litellm_and_local_cli_backends() -> None:
     litellm_backend = create_generation_backend(
         "litellm",

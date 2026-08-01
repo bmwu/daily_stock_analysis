@@ -38,6 +38,15 @@ def test_resolved_provider_namespace_uses_router_alias_before_slashless_default(
     assert resolved_provider_namespace("gpt-4o-mini", model_list) == "openai"
 
 
+def test_trace_model_matches_treats_openai_compatible_as_openai() -> None:
+    assert trace_model_matches(
+        "openai",
+        "openai/test-model",
+        "openai/test-model",
+        current_provider="openai_compatible",
+    ) is True
+
+
 def test_resolved_model_provider_identity_returns_wire_model_and_provider() -> None:
     model_list = [
         {
@@ -48,6 +57,20 @@ def test_resolved_model_provider_identity_returns_wire_model_and_provider() -> N
 
     assert resolved_model_provider_identity("fast", model_list) == ("openai/gpt-4o", "openai")
     assert resolved_model_provider_identity("gpt-4o-mini", model_list) == ("gpt-4o-mini", "openai")
+
+
+def test_resolved_model_provider_identity_uses_custom_llm_provider_for_slashless_models() -> None:
+    model_list = [
+        {
+            "model_name": "MiniMax-M3",
+            "litellm_params": {
+                "model": "MiniMax-M3",
+                "custom_llm_provider": "anthropic",
+            },
+        }
+    ]
+
+    assert resolved_model_provider_identity("MiniMax-M3", model_list) == ("MiniMax-M3", "anthropic")
 
 
 def test_extract_trace_scans_only_current_run_and_keeps_multi_step_tool_loop() -> None:

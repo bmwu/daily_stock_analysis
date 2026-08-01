@@ -612,7 +612,11 @@ class LLMToolAdapter:
             logger.error(error_msg)
             return LLMResponse(content=error_msg, provider="error")
         started_at = time.time()
-        providers = [self._get_model_provider(model) for model in models_to_try]
+        route_model_list = route_resolution.model_list or getattr(config, "llm_model_list", []) or []
+        providers = [
+            self._get_model_provider(model, route_model_list)
+            for model in models_to_try
+        ]
 
         last_error = None
         hit_rate_limit = False
@@ -669,11 +673,9 @@ class LLMToolAdapter:
         return LLMResponse(content=error_msg, provider="error")
 
     @staticmethod
-    def _get_model_provider(model: str) -> str:
+    def _get_model_provider(model: str, model_list: Optional[List[Dict[str, Any]]] = None) -> str:
         """Return LiteLLM provider namespace for model fallback grouping."""
-        if "/" in model:
-            return model.split("/", 1)[0]
-        return "openai"
+        return resolved_provider_namespace(model, model_list)
 
     def _call_litellm_model(
         self,

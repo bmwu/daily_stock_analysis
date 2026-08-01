@@ -48,6 +48,15 @@ from src.services.analysis_context_builder import (
 from src.storage import DatabaseManager
 
 
+def setUpModule():
+    DatabaseManager.reset_instance()
+    DatabaseManager(db_url="sqlite:///:memory:")
+
+
+def tearDownModule():
+    DatabaseManager.reset_instance()
+
+
 # ============================================================
 # Helpers
 # ============================================================
@@ -110,6 +119,7 @@ def _make_stock_registry(executed_calls):
 def _make_mock_adapter():
     """Create a MagicMock LLMToolAdapter."""
     adapter = MagicMock()
+    adapter._config = None
     return adapter
 
 
@@ -494,7 +504,11 @@ class TestAgentExecutor(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertEqual(result.total_tokens, 0)
         self.assertEqual(usage["cache_observation"], "invalid_provider_usage")
-        persist_usage.assert_called_once_with(usage, "openai/gpt-test", call_type="agent")
+        persist_usage.assert_called_once()
+        (payload, model_name), kwargs = persist_usage.call_args
+        self.assertEqual(kwargs.get("call_type"), "agent")
+        self.assertEqual(model_name, "openai/gpt-test")
+        self.assertEqual(payload["provider"], "openai")
 
     def test_run_agent_loop_persists_agent_usage_with_provider_usage(self):
         registry = _make_registry_with_echo()
@@ -518,7 +532,62 @@ class TestAgentExecutor(unittest.TestCase):
 
         self.assertTrue(result.success)
         self.assertEqual(result.total_tokens, 5)
-        persist_usage.assert_called_once_with(usage, "openai/gpt-test", call_type="agent")
+        persist_usage.assert_called_once()
+        (payload, model_name), kwargs = persist_usage.call_args
+        self.assertEqual(kwargs.get("call_type"), "agent")
+        self.assertEqual(model_name, "openai/gpt-test")
+        self.assertEqual(payload["provider"], "openai")
+        self.assertEqual(payload["total_tokens"], 5)
+
+    def test_run_agent_loop_does_not_persist_bare_provider_as_model(self):
+        registry = _make_registry_with_echo()
+        adapter = _make_mock_adapter()
+        adapter.call_with_tools.return_value = LLMResponse(
+            content="Done.",
+            tool_calls=[],
+            usage={"total_tokens": 10},
+            provider="openai",
+            model="",
+        )
+
+        with patch("src.agent.runner._persist_usage") as persist_usage:
+            result = run_agent_loop(
+                messages=[{"role": "user", "content": "Analyze"}],
+                tool_registry=registry,
+                llm_adapter=adapter,
+                max_steps=1,
+            )
+
+        self.assertTrue(result.success)
+        persist_usage.assert_not_called()
+
+    def test_run_agent_loop_persists_primary_model_when_response_model_missing(self):
+        registry = _make_registry_with_echo()
+        adapter = _make_mock_adapter()
+        adapter._config = Config(agent_litellm_model="openai/gpt-4o-mini")
+        usage = {"total_tokens": 8}
+        adapter.call_with_tools.return_value = LLMResponse(
+            content="Done.",
+            tool_calls=[],
+            usage=usage,
+            provider="openai",
+            model="",
+        )
+
+        with patch("src.agent.runner._persist_usage") as persist_usage:
+            result = run_agent_loop(
+                messages=[{"role": "user", "content": "Analyze"}],
+                tool_registry=registry,
+                llm_adapter=adapter,
+                max_steps=1,
+            )
+
+        self.assertTrue(result.success)
+        persist_usage.assert_called_once()
+        (payload, model_name), kwargs = persist_usage.call_args
+        self.assertEqual(kwargs.get("call_type"), "agent")
+        self.assertEqual(model_name, "openai/gpt-4o-mini")
+        self.assertEqual(payload["provider"], "openai")
 
     def test_run_agent_loop_blocks_conflicting_stock_scoped_tool_and_keeps_tool_result(self):
         executed_calls = []
