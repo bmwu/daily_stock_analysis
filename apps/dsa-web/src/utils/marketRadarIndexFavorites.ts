@@ -45,3 +45,20 @@ export function toggleFavoriteIndexCode(codes: string[], code: string): string[]
   }
   return saveFavoriteIndexCodes([...codes, target]);
 }
+
+/** Keep favorites, but order them by catalog (market) sequence. */
+export function orderFavoriteCodesByCatalog(favoriteCodes: string[], catalogCodes: string[]): string[] {
+  const favoriteSet = new Set(
+    favoriteCodes.map((code) => String(code || '').trim()).filter(Boolean),
+  );
+  const ordered = catalogCodes
+    .map((code) => String(code || '').trim())
+    .filter((code) => code && favoriteSet.has(code));
+  // Keep unknown favorites (not in catalog) at the end in original relative order.
+  for (const code of favoriteSet) {
+    if (!ordered.includes(code)) {
+      ordered.push(code);
+    }
+  }
+  return ordered;
+}
