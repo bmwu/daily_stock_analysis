@@ -1,6 +1,6 @@
 import type React from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { BellRing } from 'lucide-react';
+import { BellRing, Plus } from 'lucide-react';
 import { alertsApi } from '../api/alerts';
 import type { ParsedApiError } from '../api/error';
 import { getParsedApiError } from '../api/error';
@@ -12,7 +12,16 @@ import {
   type AlertTypeFilter,
 } from '../components/alerts/AlertRuleList';
 import { AlertTriggerHistory } from '../components/alerts/AlertTriggerHistory';
-import { ApiErrorAlert, AppPage, Card, EmptyState, InlineAlert, Loading, PageHeader } from '../components/common';
+import {
+  ApiErrorAlert,
+  AppPage,
+  Card,
+  Drawer,
+  EmptyState,
+  InlineAlert,
+  Loading,
+  PageHeader,
+} from '../components/common';
 import type {
   AlertNotificationItem,
   AlertRuleCreateRequest,
@@ -22,8 +31,11 @@ import type {
   AlertType,
 } from '../types/alerts';
 import { formatDateTime } from '../utils/format';
+import { cn } from '../utils/cn';
 
 const PAGE_SIZE = 20;
+
+type AlertsMainTab = 'rules' | 'triggers';
 
 function enabledFilterToQuery(value: AlertRuleEnabledFilter): boolean | undefined {
   if (value === 'enabled') return true;
@@ -101,6 +113,9 @@ const AlertsPage: React.FC = () => {
   useEffect(() => {
     document.title = '告警中心 - DSA';
   }, []);
+
+  const [mainTab, setMainTab] = useState<AlertsMainTab>('rules');
+  const [createDrawerOpen, setCreateDrawerOpen] = useState(false);
 
   const [rules, setRules] = useState<AlertRuleItem[]>([]);
   const [rulesTotal, setRulesTotal] = useState(0);
@@ -207,6 +222,7 @@ const AlertsPage: React.FC = () => {
     try {
       const created = await alertsApi.createRule(payload);
       setCreateSuccess(`已创建告警规则「${created.name}」`);
+      setCreateDrawerOpen(false);
       await loadRules(1);
       return true;
     } catch (error) {
@@ -264,9 +280,24 @@ const AlertsPage: React.FC = () => {
         eyebrow="Alert Center"
         title="告警中心"
         description="管理事件告警、日线技术指标、自选股、持仓/账户联动和大盘红绿灯规则，执行一次性测试，并查看后台评估任务记录的触发历史。"
+        actions={(
+          <button
+            type="button"
+            className="btn-primary inline-flex items-center gap-2"
+            onClick={() => {
+              setCreateError(null);
+              setCreateDrawerOpen(true);
+            }}
+          >
+            <Plus className="h-4 w-4" />
+            创建规则
+          </button>
+        )}
       />
 
-      {createError ? <ApiErrorAlert error={createError} onDismiss={() => setCreateError(null)} /> : null}
+      {createError && !createDrawerOpen ? (
+        <ApiErrorAlert error={createError} onDismiss={() => setCreateError(null)} />
+      ) : null}
       {createSuccess ? (
         <InlineAlert
           title="创建成功"
@@ -281,84 +312,139 @@ const AlertsPage: React.FC = () => {
       ) : null}
       {rulesError ? <ApiErrorAlert error={rulesError} onDismiss={() => setRulesError(null)} /> : null}
 
-      <div className="grid items-stretch gap-5 xl:grid-cols-[380px_minmax(0,1fr)]">
-        <AlertRuleForm onSubmit={handleCreateRule} isSubmitting={createLoading} />
-        <div className="flex h-full min-h-0 flex-col gap-4">
-          <AlertRuleList
-            className="flex h-full min-h-0 flex-col"
-            rules={rules}
-            total={rulesTotal}
-            page={rulesPage}
-            pageSize={PAGE_SIZE}
-            isLoading={rulesLoading}
-            enabledFilter={enabledFilter}
-            alertTypeFilter={alertTypeFilter}
-            onEnabledFilterChange={(value) => {
-              setEnabledFilter(value);
-              setRulesPage(1);
-            }}
-            onAlertTypeFilterChange={(value) => {
-              setAlertTypeFilter(value);
-              setRulesPage(1);
-            }}
-            onPageChange={setRulesPage}
-            onToggleEnabled={(rule) => void handleToggleEnabled(rule)}
-            onDelete={(rule) => void handleDeleteRule(rule)}
-            onTest={(rule) => void handleTestRule(rule)}
-            busyRule={busyRule}
-          />
-          {testResult ? (
-            <InlineAlert
-              title="测试结果"
-              variant={testVariant(testResult)}
-              message={renderTestResultMessage(testResult)}
-            />
-          ) : null}
+      <div className="space-y-4">
+        <div className="inline-flex rounded-xl border border-border/70 bg-elevated/30 p-1" role="tablist" aria-label="告警中心主视图">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mainTab === 'rules'}
+            className={cn(
+              'rounded-lg px-4 py-2 text-sm transition-colors',
+              mainTab === 'rules'
+                ? 'bg-card text-foreground shadow-sm'
+                : 'text-secondary-text hover:text-foreground',
+            )}
+            onClick={() => setMainTab('rules')}
+          >
+            告警规则
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mainTab === 'triggers'}
+            className={cn(
+              'rounded-lg px-4 py-2 text-sm transition-colors',
+              mainTab === 'triggers'
+                ? 'bg-card text-foreground shadow-sm'
+                : 'text-secondary-text hover:text-foreground',
+            )}
+            onClick={() => setMainTab('triggers')}
+          >
+            触发历史
+          </button>
         </div>
+
+        {mainTab === 'rules' ? (
+          <div className="space-y-4" role="tabpanel" aria-label="告警规则">
+            <AlertRuleList
+              className="flex h-full min-h-0 flex-col"
+              rules={rules}
+              total={rulesTotal}
+              page={rulesPage}
+              pageSize={PAGE_SIZE}
+              isLoading={rulesLoading}
+              enabledFilter={enabledFilter}
+              alertTypeFilter={alertTypeFilter}
+              onEnabledFilterChange={(value) => {
+                setEnabledFilter(value);
+                setRulesPage(1);
+              }}
+              onAlertTypeFilterChange={(value) => {
+                setAlertTypeFilter(value);
+                setRulesPage(1);
+              }}
+              onPageChange={setRulesPage}
+              onToggleEnabled={(rule) => void handleToggleEnabled(rule)}
+              onDelete={(rule) => void handleDeleteRule(rule)}
+              onTest={(rule) => void handleTestRule(rule)}
+              busyRule={busyRule}
+            />
+            {testResult ? (
+              <InlineAlert
+                title="测试结果"
+                variant={testVariant(testResult)}
+                message={renderTestResultMessage(testResult)}
+              />
+            ) : null}
+
+            {notificationsError ? (
+              <ApiErrorAlert error={notificationsError} onDismiss={() => setNotificationsError(null)} />
+            ) : null}
+            <Card title="通知尝试记录" subtitle="通知结果" variant="bordered" padding="md">
+              {notificationsLoading ? <Loading label="正在加载通知尝试记录" /> : null}
+              {!notificationsLoading && notifications.length === 0 ? (
+                <EmptyState
+                  icon={<BellRing className="h-6 w-6" />}
+                  title="暂无通知尝试记录"
+                  description="当前没有可展示的通知尝试明细；告警触发仍会按已配置通知渠道发送。"
+                />
+              ) : null}
+              {!notificationsLoading && notifications.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[680px] text-left text-sm">
+                    <thead className="border-b border-border/60 text-xs uppercase text-muted-text">
+                      <tr>
+                        <th className="px-3 py-2 font-medium">渠道</th>
+                        <th className="px-3 py-2 font-medium">状态</th>
+                        <th className="px-3 py-2 font-medium">错误码</th>
+                        <th className="px-3 py-2 font-medium">耗时</th>
+                        <th className="px-3 py-2 font-medium">时间</th>
+                        <th className="px-3 py-2 font-medium">诊断</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border/40">
+                      {notifications.map((notification) => (
+                        <tr key={notification.id}>
+                          <td className="px-3 py-3">{formatNotificationChannel(notification.channel)}</td>
+                          <td className="px-3 py-3">{formatNotificationStatus(notification)}</td>
+                          <td className="px-3 py-3">{notification.errorCode ?? '--'}</td>
+                          <td className="px-3 py-3">
+                            {notification.latencyMs == null ? '--' : `${notification.latencyMs}ms`}
+                          </td>
+                          <td className="px-3 py-3">{formatDateTime(notification.createdAt)}</td>
+                          <td className="px-3 py-3">{notification.diagnostics ?? '--'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
+            </Card>
+          </div>
+        ) : (
+          <div className="space-y-4" role="tabpanel" aria-label="触发历史">
+            {triggersError ? (
+              <ApiErrorAlert error={triggersError} onDismiss={() => setTriggersError(null)} />
+            ) : null}
+            <AlertTriggerHistory triggers={triggers} isLoading={triggersLoading} />
+          </div>
+        )}
       </div>
 
-      {triggersError ? <ApiErrorAlert error={triggersError} onDismiss={() => setTriggersError(null)} /> : null}
-      <AlertTriggerHistory triggers={triggers} isLoading={triggersLoading} />
-
-      {notificationsError ? <ApiErrorAlert error={notificationsError} onDismiss={() => setNotificationsError(null)} /> : null}
-      <Card title="通知尝试记录" subtitle="通知结果" variant="bordered" padding="md">
-        {notificationsLoading ? <Loading label="正在加载通知尝试记录" /> : null}
-        {!notificationsLoading && notifications.length === 0 ? (
-          <EmptyState
-            icon={<BellRing className="h-6 w-6" />}
-            title="暂无通知尝试记录"
-            description="当前没有可展示的通知尝试明细；告警触发仍会按已配置通知渠道发送。"
-          />
-        ) : null}
-        {!notificationsLoading && notifications.length > 0 ? (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[680px] text-left text-sm">
-              <thead className="border-b border-border/60 text-xs uppercase text-muted-text">
-                <tr>
-                  <th className="px-3 py-2 font-medium">渠道</th>
-                  <th className="px-3 py-2 font-medium">状态</th>
-                  <th className="px-3 py-2 font-medium">错误码</th>
-                  <th className="px-3 py-2 font-medium">耗时</th>
-                  <th className="px-3 py-2 font-medium">时间</th>
-                  <th className="px-3 py-2 font-medium">诊断</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border/40">
-                {notifications.map((notification) => (
-                  <tr key={notification.id}>
-                    <td className="px-3 py-3">{formatNotificationChannel(notification.channel)}</td>
-                    <td className="px-3 py-3">{formatNotificationStatus(notification)}</td>
-                    <td className="px-3 py-3">{notification.errorCode ?? '--'}</td>
-                    <td className="px-3 py-3">{notification.latencyMs == null ? '--' : `${notification.latencyMs}ms`}</td>
-                    <td className="px-3 py-3">{formatDateTime(notification.createdAt)}</td>
-                    <td className="px-3 py-3">{notification.diagnostics ?? '--'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : null}
-      </Card>
+      <Drawer
+        isOpen={createDrawerOpen}
+        onClose={() => setCreateDrawerOpen(false)}
+        title="创建规则"
+        resizable
+        initialWidthRatio={0.5}
+      >
+        <div className="space-y-4">
+          {createError ? (
+            <ApiErrorAlert error={createError} onDismiss={() => setCreateError(null)} />
+          ) : null}
+          <AlertRuleForm onSubmit={handleCreateRule} isSubmitting={createLoading} />
+        </div>
+      </Drawer>
     </AppPage>
   );
 };
