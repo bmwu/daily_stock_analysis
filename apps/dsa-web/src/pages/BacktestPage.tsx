@@ -472,7 +472,7 @@ const BacktestPage: React.FC = () => {
     <div className="min-h-full flex flex-col rounded-[1.5rem] bg-transparent">
       {/* Header */}
       <header className="flex-shrink-0 border-b border-white/5 px-3 py-3 sm:px-4">
-        <div className="mx-auto flex max-w-5xl flex-col gap-3">
+        <div className="mx-auto flex w-full max-w-none flex-col gap-3">
           <StockCodeField
             value={codeFilter}
             onChange={(value) => setCodeFilter(value.toUpperCase())}
@@ -584,12 +584,12 @@ const BacktestPage: React.FC = () => {
           </button>
         </div>
         {runResult && (
-          <div className="mt-2 max-w-4xl">
+          <div className="mt-2 w-full max-w-none">
             <RunSummary data={runResult} language={language} />
           </div>
         )}
         {runError && (
-          <ApiErrorAlert error={runError} className="mt-2 max-w-4xl" />
+          <ApiErrorAlert error={runError} className="mt-2 w-full max-w-none" />
         )}
         <p className="mt-2 text-xs text-muted-text">
           {isNextDayValidation

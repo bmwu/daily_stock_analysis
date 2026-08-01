@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [改进] 用量页取消 `max-w-7xl` 限制，与持仓页同宽铺满 Shell 主栏。
+- [改进] 回测页取消 `max-w-5xl` / `max-w-4xl` 限制，与持仓页同宽铺满 Shell 主栏。
+- [改进] AI 建议页取消 `max-w-7xl` 限制，与持仓页同宽铺满 Shell 主栏。
 - [改进] 选股页取消 `max-w-6xl` 限制，与持仓页同宽铺满 Shell 主栏。
 - [改进] 首页右侧内容区取消 `max-w-6xl` / `max-w-4xl` 限制，与持仓页同宽铺满 Shell 主栏。
 - [修复] LiteLLM 用量归因：无 `usage.provider` 时按路由 `custom_llm_provider` / 模型族推断，避免无前缀模型误记为 `openai`。
