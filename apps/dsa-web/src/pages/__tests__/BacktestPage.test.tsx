@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { UiLanguageProvider } from '../../contexts/UiLanguageContext';
 import { UI_LANGUAGE_STORAGE_KEY } from '../../utils/uiLanguage';
@@ -23,6 +24,58 @@ vi.mock('../../api/backtest', () => ({
     getStockPerformance: mockGetStockPerformance,
     run: mockRun,
   },
+}));
+
+vi.mock('../../api/history', () => ({
+  historyApi: {
+    getStockBarList: vi.fn().mockResolvedValue({ total: 0, items: [] }),
+  },
+}));
+
+vi.mock('../../api/systemConfig', () => ({
+  systemConfigApi: {
+    getWatchlist: vi.fn().mockResolvedValue([]),
+    addToWatchlist: vi.fn(),
+    removeFromWatchlist: vi.fn(),
+  },
+}));
+
+vi.mock('../../api/portfolio', () => ({
+  portfolioApi: {
+    getSnapshot: vi.fn().mockResolvedValue({ positions: [] }),
+  },
+}));
+
+vi.mock('../../components/StockAutocomplete', () => ({
+  StockAutocomplete: ({
+    value,
+    onChange,
+    onSubmit,
+    placeholder,
+    ariaLabel,
+    disabled,
+    className,
+  }: {
+    value: string;
+    onChange: (value: string) => void;
+    onSubmit?: (code: string) => void;
+    placeholder?: string;
+    ariaLabel?: string;
+    disabled?: boolean;
+    className?: string;
+  }) => (
+    <input
+      value={value}
+      placeholder={placeholder}
+      aria-label={ariaLabel}
+      disabled={disabled}
+      className={className}
+      onChange={(event) => onChange(event.target.value)}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') onSubmit?.(value);
+      }}
+    />
+  ),
 }));
 
 const basePerformance = {
@@ -73,6 +126,7 @@ const baseResultItem = {
 beforeEach(() => {
   vi.clearAllMocks();
   window.localStorage.clear();
+  window.localStorage.setItem(UI_LANGUAGE_STORAGE_KEY, 'zh');
   mockGetOverallPerformance.mockResolvedValue(basePerformance);
   mockGetStockPerformance.mockResolvedValue(null);
   mockGetResults.mockResolvedValue({
@@ -94,14 +148,22 @@ describe('BacktestPage', () => {
   function renderEnglishPage() {
     window.localStorage.setItem(UI_LANGUAGE_STORAGE_KEY, 'en');
     render(
-      <UiLanguageProvider>
-        <BacktestPage />
-      </UiLanguageProvider>,
+      <MemoryRouter>
+        <UiLanguageProvider>
+          <BacktestPage />
+        </UiLanguageProvider>
+      </MemoryRouter>,
     );
   }
 
   it('renders shared surface inputs and prediction tracking outputs', async () => {
-    render(<BacktestPage />);
+    render(
+      <MemoryRouter>
+        <UiLanguageProvider>
+          <BacktestPage />
+        </UiLanguageProvider>
+      </MemoryRouter>,
+    );
 
     const filterInput = await screen.findByPlaceholderText('按股票代码筛选（留空表示全部）');
     const windowInput = screen.getByPlaceholderText('10');
@@ -144,7 +206,13 @@ describe('BacktestPage', () => {
       ],
     });
 
-    render(<BacktestPage />);
+    render(
+      <MemoryRouter>
+        <UiLanguageProvider>
+          <BacktestPage />
+        </UiLanguageProvider>
+      </MemoryRouter>,
+    );
 
     const codeCell = await screen.findByText('600519');
     const resultRow = codeCell.closest('tr');
@@ -196,7 +264,13 @@ describe('BacktestPage', () => {
       ],
     });
 
-    render(<BacktestPage />);
+    render(
+      <MemoryRouter>
+        <UiLanguageProvider>
+          <BacktestPage />
+        </UiLanguageProvider>
+      </MemoryRouter>,
+    );
 
     const codeCell = await screen.findByText('600519');
     const resultRow = codeCell.closest('tr');
@@ -223,7 +297,13 @@ describe('BacktestPage', () => {
   });
 
   it('filters results with stock code, window, phase, and analysis date range when clicking Filter', async () => {
-    render(<BacktestPage />);
+    render(
+      <MemoryRouter>
+        <UiLanguageProvider>
+          <BacktestPage />
+        </UiLanguageProvider>
+      </MemoryRouter>,
+    );
 
     const filterInput = await screen.findByPlaceholderText('按股票代码筛选（留空表示全部）');
     const windowInput = screen.getByPlaceholderText('10');
@@ -267,7 +347,13 @@ describe('BacktestPage', () => {
       message: '未找到符合条件的历史分析记录',
       diagnostics: { emptyReason: 'no_matching_analysis' },
     });
-    render(<BacktestPage />);
+    render(
+      <MemoryRouter>
+        <UiLanguageProvider>
+          <BacktestPage />
+        </UiLanguageProvider>
+      </MemoryRouter>,
+    );
 
     const filterInput = await screen.findByPlaceholderText('按股票代码筛选（留空表示全部）');
     const windowInput = screen.getByPlaceholderText('10');
@@ -325,7 +411,13 @@ describe('BacktestPage', () => {
       message: '未找到符合条件的历史分析记录',
       diagnostics: { emptyReason: 'no_matching_analysis' },
     });
-    render(<BacktestPage />);
+    render(
+      <MemoryRouter>
+        <UiLanguageProvider>
+          <BacktestPage />
+        </UiLanguageProvider>
+      </MemoryRouter>,
+    );
 
     const filterInput = await screen.findByPlaceholderText('按股票代码筛选（留空表示全部）');
     const windowInput = screen.getByPlaceholderText('10');
@@ -378,7 +470,13 @@ describe('BacktestPage', () => {
   });
 
   it('switches to next-day validation with the 1D shortcut', async () => {
-    render(<BacktestPage />);
+    render(
+      <MemoryRouter>
+        <UiLanguageProvider>
+          <BacktestPage />
+        </UiLanguageProvider>
+      </MemoryRouter>,
+    );
 
     await screen.findByPlaceholderText('按股票代码筛选（留空表示全部）');
     fireEvent.click(screen.getByRole('button', { name: '1 日验证' }));

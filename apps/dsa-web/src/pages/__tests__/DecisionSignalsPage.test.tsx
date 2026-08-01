@@ -1,5 +1,6 @@
 import type React from 'react';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   decisionSignalsApi,
@@ -44,6 +45,20 @@ vi.mock('../../api/decisionSignals', () => ({
 vi.mock('../../api/history', () => ({
   historyApi: {
     getStockBarList: vi.fn(),
+  },
+}));
+
+vi.mock('../../api/systemConfig', () => ({
+  systemConfigApi: {
+    getWatchlist: vi.fn().mockResolvedValue([]),
+    addToWatchlist: vi.fn(),
+    removeFromWatchlist: vi.fn(),
+  },
+}));
+
+vi.mock('../../api/portfolio', () => ({
+  portfolioApi: {
+    getSnapshot: vi.fn().mockResolvedValue({ positions: [] }),
   },
 }));
 
@@ -368,9 +383,11 @@ const persistedReassessResponse: DecisionSignalReassessResponse = {
 
 function renderPage() {
   return render(
-    <UiLanguageProvider>
-      <DecisionSignalsPage />
-    </UiLanguageProvider>,
+    <MemoryRouter>
+      <UiLanguageProvider>
+        <DecisionSignalsPage />
+      </UiLanguageProvider>
+    </MemoryRouter>,
   );
 }
 
@@ -1081,7 +1098,7 @@ describe('DecisionSignalsPage', () => {
     renderPage();
 
     expect(await screen.findByText('最近分析')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /600519/ }));
+    fireEvent.click(screen.getAllByRole('button', { name: /600519/ })[0]);
 
     await waitFor(() => {
       expect(decisionSignalsApi.getLatest).toHaveBeenCalledWith('600519', {
@@ -1096,7 +1113,7 @@ describe('DecisionSignalsPage', () => {
     renderPage();
 
     expect(await screen.findByText('最近分析')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /600519/ }));
+    fireEvent.click(screen.getAllByRole('button', { name: /600519/ })[0]);
 
     await waitFor(() => {
       expect(decisionSignalsApi.getLatest).toHaveBeenLastCalledWith('600519', {
@@ -1134,7 +1151,7 @@ describe('DecisionSignalsPage', () => {
     });
     renderPage();
 
-    fireEvent.click(await screen.findByRole('button', { name: /^600519$/ }));
+    fireEvent.click((await screen.findAllByRole('button', { name: /^600519$/ }))[0]);
 
     await waitFor(() => {
       expect(decisionSignalsApi.getLatest).toHaveBeenCalledWith('600519', {
@@ -1176,7 +1193,7 @@ describe('DecisionSignalsPage', () => {
 
     renderPage();
 
-    expect(await screen.findByText('暂无可用候选，可直接输入股票代码或名称。')).toBeInTheDocument();
+    expect(await screen.findByText(/自选为空/)).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'AI 建议' })).toBeInTheDocument();
   });
 

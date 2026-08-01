@@ -4,7 +4,9 @@ import { Check, Minus, X } from 'lucide-react';
 import { backtestApi } from '../api/backtest';
 import type { ParsedApiError } from '../api/error';
 import { getParsedApiError } from '../api/error';
-import { ApiErrorAlert, Card, Badge, EmptyState, Pagination, StatusDot, Tooltip } from '../components/common';
+import { ApiErrorAlert, Card, Badge, EmptyState, Pagination, StatusDot, Tooltip, StockCodeField } from '../components/common';
+import type { StockCodeCandidate } from '../components/common/StockCodeField';
+import { historyApi } from '../api/history';
 import { useUiLanguage } from '../contexts/UiLanguageContext';
 import { formatUiText, type UiLanguage } from '../i18n/uiText';
 import {
@@ -249,13 +251,45 @@ const BacktestPage: React.FC = () => {
   const phaseFilterOptions = BACKTEST_PHASE_FILTER_OPTIONS[language];
   const actionLabels = buildDecisionActionLabelMap(t);
 
+  // Input state
+  const [codeFilter, setCodeFilter] = useState('');
+  const [historyCodeCandidates, setHistoryCodeCandidates] = useState<StockCodeCandidate[]>([]);
+
   // Set page title
   useEffect(() => {
     document.title = text.documentTitle;
   }, [text.documentTitle]);
 
-  // Input state
-  const [codeFilter, setCodeFilter] = useState('');
+  useEffect(() => {
+    let mounted = true;
+    void historyApi.getStockBarList({ limit: 12 })
+      .then((response) => {
+        if (!mounted) return;
+        const seen = new Set<string>();
+        const next: StockCodeCandidate[] = [];
+        for (const item of response.items || []) {
+          const code = String(item.stockCode || '').trim();
+          if (!code || code.toUpperCase() === 'MARKET') continue;
+          const key = code.toUpperCase();
+          if (seen.has(key)) continue;
+          seen.add(key);
+          next.push({
+            code,
+            displayCode: code,
+            name: item.stockName || undefined,
+            source: 'history',
+          });
+          if (next.length >= 12) break;
+        }
+        setHistoryCodeCandidates(next);
+      })
+      .catch(() => {
+        if (mounted) setHistoryCodeCandidates([]);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
   const [analysisDateFrom, setAnalysisDateFrom] = useState('');
   const [analysisDateTo, setAnalysisDateTo] = useState('');
   const [phaseFilter, setPhaseFilter] = useState<BacktestPhaseFilter>('all');
@@ -438,18 +472,22 @@ const BacktestPage: React.FC = () => {
     <div className="min-h-full flex flex-col rounded-[1.5rem] bg-transparent">
       {/* Header */}
       <header className="flex-shrink-0 border-b border-white/5 px-3 py-3 sm:px-4">
-        <div className="flex max-w-5xl flex-wrap items-center gap-2">
-          <div className="relative min-w-0 flex-[1_1_220px]">
-            <input
-              type="text"
-              value={codeFilter}
-              onChange={(e) => setCodeFilter(e.target.value.toUpperCase())}
-              onKeyDown={handleKeyDown}
-              placeholder={text.codePlaceholder}
-              disabled={isRunning}
-              className={BACKTEST_INPUT_CLASS}
-            />
-          </div>
+        <div className="mx-auto flex max-w-5xl flex-col gap-3">
+          <StockCodeField
+            value={codeFilter}
+            onChange={(value) => setCodeFilter(value.toUpperCase())}
+            onSubmit={() => handleFilter()}
+            onSelectCandidate={(candidate) => {
+              setCodeFilter((candidate.displayCode || candidate.code).toUpperCase());
+            }}
+            placeholder={text.codePlaceholder}
+            ariaLabel={text.codePlaceholder}
+            disabled={isRunning}
+            sources={['watchlist', 'history']}
+            extraCandidates={historyCodeCandidates}
+            inputClassName={BACKTEST_INPUT_CLASS}
+          />
+          <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
             onClick={handleFilter}
@@ -558,6 +596,7 @@ const BacktestPage: React.FC = () => {
             ? text.oneDayModeDescription
             : text.windowModeDescription}
         </p>
+        </div>
       </header>
 
       {/* Main content */}

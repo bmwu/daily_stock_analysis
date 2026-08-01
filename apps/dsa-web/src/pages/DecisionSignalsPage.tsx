@@ -17,14 +17,15 @@ import {
   InlineAlert,
   PageHeader,
   Pagination,
+  StockCodeField,
 } from '../components/common';
+import type { StockCodeCandidate } from '../components/common/StockCodeField';
 import {
   DecisionSignalCard,
   DecisionSignalDetails,
 } from '../components/decision-signals/DecisionSignalDisplay';
 import { DecisionSignalProfileCalibration } from '../components/decision-signals/DecisionSignalProfileCalibration';
 import { DecisionSignalTimeline } from '../components/decision-signals/DecisionSignalTimeline';
-import { StockAutocomplete } from '../components/StockAutocomplete';
 import { useUiLanguage } from '../contexts/UiLanguageContext';
 import { useStockIndex } from '../hooks/useStockIndex';
 import type { UiTextKey } from '../i18n/uiText';
@@ -405,7 +406,6 @@ const DecisionSignalsPage: React.FC = () => {
   const [stockDraft, setStockDraft] = useState('');
   const [activeStockContext, setActiveStockContext] = useState<StockContext | null>(null);
   const [historyCandidates, setHistoryCandidates] = useState<StockCandidate[]>([]);
-  const [historyCandidatesLoaded, setHistoryCandidatesLoaded] = useState(false);
   const [latestItems, setLatestItems] = useState<DecisionSignalItem[]>([]);
   const [latestSearched, setLatestSearched] = useState(false);
   const [latestLoading, setLatestLoading] = useState(false);
@@ -445,12 +445,9 @@ const DecisionSignalsPage: React.FC = () => {
     () => toPopularCandidates(stockIndex, STOCK_CANDIDATE_LIMIT),
     [stockIndex],
   );
-  const stockCandidates = historyCandidates.length > 0 ? historyCandidates : popularCandidates;
-  const stockCandidateMode: 'history' | 'popular' | 'empty' = historyCandidates.length > 0
-    ? 'history'
-    : stockCandidates.length > 0
-      ? 'popular'
-      : 'empty';
+  const stockCodeFieldCandidates = useMemo<StockCodeCandidate[]>(() => (
+    historyCandidates.length > 0 ? historyCandidates : popularCandidates
+  ), [historyCandidates, popularCandidates]);
 
   useEffect(() => {
     document.title = t('decisionSignals.pageTitle');
@@ -477,9 +474,6 @@ const DecisionSignalsPage: React.FC = () => {
       .catch(() => {
         if (mounted) setHistoryCandidates([]);
       })
-      .finally(() => {
-        if (mounted) setHistoryCandidatesLoaded(true);
-      });
     return () => {
       mounted = false;
     };
@@ -871,10 +865,6 @@ const DecisionSignalsPage: React.FC = () => {
     });
   }, [applyStockContext]);
 
-  const handleCandidateSelect = useCallback((candidate: StockCandidate) => {
-    applyStockContext(candidate);
-  }, [applyStockContext]);
-
   const handleStockFormSubmit = useCallback((code: string) => {
     if (draftMatchesStockContext(code, activeStockContext)) {
       applyStockContext(activeStockContext);
@@ -1204,19 +1194,36 @@ const DecisionSignalsPage: React.FC = () => {
 
         <Card title={t('decisionSignals.stockContextTitle')} subtitle={t('decisionSignals.stockContextDescription')} padding="md">
           <form
-            className="flex flex-col gap-3 md:flex-row"
+            className="flex flex-col gap-3 md:flex-row md:items-start"
             onSubmit={(event) => {
               event.preventDefault();
               handleStockFormSubmit(stockDraft);
             }}
           >
             <div className="min-w-0 flex-1">
-              <StockAutocomplete
+              <StockCodeField
                 value={stockDraft}
                 onChange={setStockDraft}
-                onSubmit={handleStockSubmit}
+                onSubmit={(code, meta) => {
+                  handleStockSubmit(
+                    code,
+                    meta?.name,
+                    undefined,
+                    { market: meta?.market as Market | undefined, displayCode: meta?.displayCode },
+                  );
+                }}
+                onSelectCandidate={(candidate) => {
+                  applyStockContext({
+                    code: candidate.code,
+                    displayCode: candidate.displayCode,
+                    name: candidate.name,
+                    market: normalizeDecisionSignalMarket(candidate.market),
+                  });
+                }}
                 placeholder={t('decisionSignals.stockContextPlaceholder')}
                 ariaLabel={t('decisionSignals.stockContextInput')}
+                sources={['watchlist', 'history', 'popular']}
+                extraCandidates={stockCodeFieldCandidates}
               />
             </div>
             <button
@@ -1244,32 +1251,6 @@ const DecisionSignalsPage: React.FC = () => {
           ) : (
             <p className="mt-3 text-sm text-secondary-text">{t('decisionSignals.stockContextEmpty')}</p>
           )}
-
-          {historyCandidatesLoaded && stockCandidates.length > 0 ? (
-            <div className="mt-4">
-              <p className="text-xs font-medium uppercase text-muted-text">
-                {stockCandidateMode === 'history'
-                  ? t('decisionSignals.stockContextRecent')
-                  : t('decisionSignals.stockContextPopular')}
-              </p>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {stockCandidates.map((candidate) => (
-                  <button
-                    key={`${candidate.source}:${getCandidateKey(candidate)}`}
-                    type="button"
-                    className="rounded-full border border-border/70 bg-elevated/40 px-3 py-1.5 text-sm text-foreground transition-colors hover:border-primary/60 hover:text-primary"
-                    onClick={() => handleCandidateSelect(candidate)}
-                  >
-                    <span className="font-mono">{candidate.displayCode ?? candidate.code}</span>
-                    {candidate.name ? <span className="ml-1 text-secondary-text">{candidate.name}</span> : null}
-                    {candidate.market ? <span className="ml-1 text-muted-text">/ {candidate.market}</span> : null}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : historyCandidatesLoaded ? (
-            <p className="mt-4 text-sm text-secondary-text">{t('decisionSignals.stockContextNoCandidates')}</p>
-          ) : null}
         </Card>
 
         <Card padding="md">

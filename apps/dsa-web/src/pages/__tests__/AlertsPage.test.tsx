@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import AlertsPage from '../AlertsPage';
 
@@ -38,7 +39,40 @@ vi.mock('../../api/alerts', () => ({
 vi.mock('../../api/portfolio', () => ({
   portfolioApi: {
     getAccounts: vi.fn().mockResolvedValue({ accounts: [] }),
+    getSnapshot: vi.fn().mockResolvedValue({ positions: [] }),
   },
+}));
+
+vi.mock('../../api/systemConfig', () => ({
+  systemConfigApi: {
+    getWatchlist: vi.fn().mockResolvedValue([]),
+    addToWatchlist: vi.fn(),
+    removeFromWatchlist: vi.fn(),
+  },
+}));
+
+vi.mock('../../components/StockAutocomplete', () => ({
+  StockAutocomplete: ({
+    value,
+    onChange,
+    ariaLabel,
+    placeholder,
+    disabled,
+  }: {
+    value: string;
+    onChange: (value: string) => void;
+    ariaLabel?: string;
+    placeholder?: string;
+    disabled?: boolean;
+  }) => (
+    <input
+      value={value}
+      aria-label={ariaLabel}
+      placeholder={placeholder}
+      disabled={disabled}
+      onChange={(event) => onChange(event.target.value)}
+    />
+  ),
 }));
 
 const parsedError = {
@@ -109,7 +143,11 @@ beforeEach(() => {
 
 describe('AlertsPage', () => {
   it('loads rules, trigger history, and notification empty state', async () => {
-    render(<AlertsPage />);
+    render(
+      <MemoryRouter>
+        <AlertsPage />
+      </MemoryRouter>,
+    );
 
     expect(screen.getByText('管理事件告警、日线技术指标、自选股、持仓/账户联动和大盘红绿灯规则，执行一次性测试，并查看后台评估任务记录的触发历史。')).toBeInTheDocument();
     expect(await screen.findByText('茅台价格突破')).toBeInTheDocument();
@@ -127,7 +165,11 @@ describe('AlertsPage', () => {
 
   it('runs a dry-run test and renders only declared response fields', async () => {
     listTriggers.mockResolvedValueOnce({ items: [], total: 0, page: 1, pageSize: 20 });
-    render(<AlertsPage />);
+    render(
+      <MemoryRouter>
+        <AlertsPage />
+      </MemoryRouter>,
+    );
 
     fireEvent.click(await screen.findByRole('button', { name: '测试' }));
 
@@ -171,7 +213,11 @@ describe('AlertsPage', () => {
         },
       ],
     });
-    render(<AlertsPage />);
+    render(
+      <MemoryRouter>
+        <AlertsPage />
+      </MemoryRouter>,
+    );
 
     fireEvent.click(await screen.findByRole('button', { name: '测试' }));
 
@@ -181,7 +227,11 @@ describe('AlertsPage', () => {
   });
 
   it('creates a rule through the page form and reloads rules', async () => {
-    render(<AlertsPage />);
+    render(
+      <MemoryRouter>
+        <AlertsPage />
+      </MemoryRouter>,
+    );
 
     await screen.findByText('茅台价格突破');
     fireEvent.change(screen.getByLabelText('标的代码'), { target: { value: 'aapl' } });
@@ -200,7 +250,11 @@ describe('AlertsPage', () => {
 
   it('keeps create form values when create API fails', async () => {
     createRule.mockRejectedValueOnce({ parsedError });
-    render(<AlertsPage />);
+    render(
+      <MemoryRouter>
+        <AlertsPage />
+      </MemoryRouter>,
+    );
 
     await screen.findByText('茅台价格突破');
     fireEvent.change(screen.getByLabelText('标的代码'), { target: { value: 'aapl' } });
@@ -220,7 +274,11 @@ describe('AlertsPage', () => {
       .mockResolvedValueOnce({ items: [], total: 20, page: 2, pageSize: 20 })
       .mockResolvedValue({ items: [rule], total: 20, page: 1, pageSize: 20 });
 
-    render(<AlertsPage />);
+    render(
+      <MemoryRouter>
+        <AlertsPage />
+      </MemoryRouter>,
+    );
 
     expect(await screen.findByText('茅台价格突破')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '2' }));
@@ -250,7 +308,11 @@ describe('AlertsPage', () => {
       .mockReturnValueOnce(initialRequest.promise)
       .mockReturnValueOnce(filteredRequest.promise);
 
-    render(<AlertsPage />);
+    render(
+      <MemoryRouter>
+        <AlertsPage />
+      </MemoryRouter>,
+    );
 
     fireEvent.change(screen.getByLabelText('启停状态'), { target: { value: 'disabled' } });
     await waitFor(() => expect(listRules).toHaveBeenCalledTimes(2));
@@ -266,7 +328,11 @@ describe('AlertsPage', () => {
   it('renders API errors through ApiErrorAlert', async () => {
     listRules.mockRejectedValueOnce({ parsedError });
 
-    render(<AlertsPage />);
+    render(
+      <MemoryRouter>
+        <AlertsPage />
+      </MemoryRouter>,
+    );
 
     expect(await screen.findByText('加载失败')).toBeInTheDocument();
     expect(screen.getByText('告警 API 不可用')).toBeInTheDocument();

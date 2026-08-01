@@ -29,7 +29,8 @@ import {
   ALERT_THRESHOLD_DIRECTION_OPTIONS,
 } from '../../locales/featureText';
 import { validateStockCode } from '../../utils/validation';
-import { Button, Card, Checkbox, Input, Select } from '../common';
+import { useWatchlist } from '../../hooks/useWatchlist';
+import { Button, Card, Checkbox, Input, Select, StockCodeField } from '../common';
 
 const SYMBOL_ALERT_TYPE_OPTIONS = [
   { value: 'price_cross', label: '价格突破' },
@@ -125,8 +126,9 @@ function optionsForScope(scope: AlertTargetScope, language: UiLanguage) {
 }
 
 export const AlertRuleForm: React.FC<AlertRuleFormProps> = ({ onSubmit, isSubmitting = false }) => {
-  const { language } = useUiLanguage();
+  const { language, t } = useUiLanguage();
   const text = ALERT_FORM_TEXT[language];
+  const watchlist = useWatchlist();
   const [name, setName] = useState('');
   const [targetScope, setTargetScope] = useState<AlertTargetScope>('single_symbol');
   const [target, setTarget] = useState('');
@@ -424,23 +426,63 @@ export const AlertRuleForm: React.FC<AlertRuleFormProps> = ({ onSubmit, isSubmit
   const renderTargetControl = () => {
     if (targetScope === 'single_symbol') {
       return (
-        <Input
+        <StockCodeField
           label={text.targetCode}
+          ariaLabel={text.targetCode}
           value={target}
-          onChange={(event) => setTarget(event.target.value)}
+          onChange={setTarget}
+          onSelectCandidate={(candidate) => {
+            setTarget(candidate.displayCode || candidate.code);
+          }}
           placeholder="600519 / AAPL / hk00700"
           disabled={isSubmitting}
+          sources={['watchlist', 'portfolio']}
         />
       );
     }
     if (targetScope === 'watchlist') {
+      const codes = watchlist.watchlistCodes;
       return (
-        <Input
-          label={text.target}
-          value="default"
-          onChange={() => undefined}
-          disabled
-        />
+        <div className="space-y-2 md:col-span-2">
+          <div className="rounded-xl border border-border/80 bg-elevated/30 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm font-medium text-foreground">
+                {t('stockCodeField.watchlistScopeTitle')}
+              </p>
+              <span className="rounded-md border border-border/70 px-2 py-0.5 font-mono text-xs text-secondary-text">
+                target=default
+              </span>
+            </div>
+            <p className="mt-1 text-xs text-secondary-text">
+              {watchlist.isLoading
+                ? t('stockCodeField.watchlistScopeLoading')
+                : codes.length > 0
+                  ? t('stockCodeField.watchlistScopeHint', { count: codes.length })
+                  : t('stockCodeField.watchlistScopeEmpty')}
+            </p>
+            {!watchlist.isLoading && codes.length > 0 ? (
+              <div className="mt-3 flex flex-wrap gap-2" data-testid="alert-watchlist-codes">
+                {codes.map((code) => (
+                  <button
+                    key={code}
+                    type="button"
+                    disabled={isSubmitting}
+                    className="rounded-lg border border-primary/40 bg-primary/10 px-3 py-2 text-sm font-mono font-semibold text-foreground transition-colors hover:border-primary hover:bg-primary/20 disabled:cursor-not-allowed disabled:opacity-60"
+                    onClick={() => {
+                      setTargetScope('single_symbol');
+                      setTarget(code);
+                    }}
+                  >
+                    {code}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            <p className="mt-2 text-[11px] text-muted-text">
+              {t('stockCodeField.watchlistScopeTargetNote')}
+            </p>
+          </div>
+        </div>
       );
     }
     if (targetScope === 'market') {

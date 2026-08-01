@@ -1,17 +1,53 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { UiLanguageProvider } from '../../../contexts/UiLanguageContext';
 import { UI_LANGUAGE_STORAGE_KEY } from '../../../utils/uiLanguage';
 import { AlertRuleForm } from '../AlertRuleForm';
 
-const { getAccounts } = vi.hoisted(() => ({
+const { getAccounts, getSnapshot, getWatchlist } = vi.hoisted(() => ({
   getAccounts: vi.fn(),
+  getSnapshot: vi.fn(),
+  getWatchlist: vi.fn(),
 }));
 
 vi.mock('../../../api/portfolio', () => ({
   portfolioApi: {
     getAccounts,
+    getSnapshot,
   },
+}));
+
+vi.mock('../../../api/systemConfig', () => ({
+  systemConfigApi: {
+    getWatchlist,
+    addToWatchlist: vi.fn(),
+    removeFromWatchlist: vi.fn(),
+  },
+}));
+
+vi.mock('../../StockAutocomplete', () => ({
+  StockAutocomplete: ({
+    value,
+    onChange,
+    ariaLabel,
+    placeholder,
+    disabled,
+  }: {
+    value: string;
+    onChange: (value: string) => void;
+    ariaLabel?: string;
+    placeholder?: string;
+    disabled?: boolean;
+  }) => (
+    <input
+      value={value}
+      aria-label={ariaLabel}
+      placeholder={placeholder}
+      disabled={disabled}
+      onChange={(event) => onChange(event.target.value)}
+    />
+  ),
 }));
 
 describe('AlertRuleForm', () => {
@@ -21,21 +57,31 @@ describe('AlertRuleForm', () => {
     onSubmit.mockReset();
     onSubmit.mockResolvedValue(undefined);
     getAccounts.mockReset();
+    getSnapshot.mockReset();
+    getWatchlist.mockReset();
     window.localStorage.clear();
     getAccounts.mockResolvedValue({ accounts: [{ id: 9, name: 'Main', market: 'us', baseCurrency: 'USD', isActive: true }] });
+    getSnapshot.mockResolvedValue({ positions: [] });
+    getWatchlist.mockResolvedValue([]);
   });
 
   function renderEnglishForm() {
     window.localStorage.setItem(UI_LANGUAGE_STORAGE_KEY, 'en');
     render(
-      <UiLanguageProvider>
-        <AlertRuleForm onSubmit={onSubmit} />
-      </UiLanguageProvider>,
+      <MemoryRouter>
+        <UiLanguageProvider>
+          <AlertRuleForm onSubmit={onSubmit} />
+        </UiLanguageProvider>
+      </MemoryRouter>,
     );
   }
 
   it('submits a price_cross rule payload', async () => {
-    render(<AlertRuleForm onSubmit={onSubmit} />);
+    render(
+      <MemoryRouter>
+        <AlertRuleForm onSubmit={onSubmit} />
+      </MemoryRouter>,
+    );
 
     fireEvent.change(screen.getByLabelText('规则名称'), { target: { value: '茅台价格突破' } });
     fireEvent.change(screen.getByLabelText('标的代码'), { target: { value: '600519' } });
@@ -56,7 +102,11 @@ describe('AlertRuleForm', () => {
   });
 
   it('submits a price_change_percent rule payload', async () => {
-    render(<AlertRuleForm onSubmit={onSubmit} />);
+    render(
+      <MemoryRouter>
+        <AlertRuleForm onSubmit={onSubmit} />
+      </MemoryRouter>,
+    );
 
     fireEvent.change(screen.getByLabelText('标的代码'), { target: { value: 'aapl' } });
     fireEvent.change(screen.getByLabelText('规则类型'), { target: { value: 'price_change_percent' } });
@@ -76,7 +126,11 @@ describe('AlertRuleForm', () => {
   });
 
   it('submits a volume_spike rule payload and supports disabled creation', async () => {
-    render(<AlertRuleForm onSubmit={onSubmit} />);
+    render(
+      <MemoryRouter>
+        <AlertRuleForm onSubmit={onSubmit} />
+      </MemoryRouter>,
+    );
 
     fireEvent.change(screen.getByLabelText('标的代码'), { target: { value: 'msft' } });
     fireEvent.change(screen.getByLabelText('规则类型'), { target: { value: 'volume_spike' } });
@@ -95,7 +149,11 @@ describe('AlertRuleForm', () => {
   });
 
   it('submits technical indicator rule payloads', async () => {
-    render(<AlertRuleForm onSubmit={onSubmit} />);
+    render(
+      <MemoryRouter>
+        <AlertRuleForm onSubmit={onSubmit} />
+      </MemoryRouter>,
+    );
 
     fireEvent.change(screen.getByLabelText('标的代码'), { target: { value: '600519' } });
     fireEvent.change(screen.getByLabelText('规则类型'), { target: { value: 'macd_cross' } });
@@ -120,7 +178,11 @@ describe('AlertRuleForm', () => {
   });
 
   it('rejects invalid technical indicator boundaries before submit', () => {
-    render(<AlertRuleForm onSubmit={onSubmit} />);
+    render(
+      <MemoryRouter>
+        <AlertRuleForm onSubmit={onSubmit} />
+      </MemoryRouter>,
+    );
 
     fireEvent.change(screen.getByLabelText('标的代码'), { target: { value: '600519' } });
     fireEvent.change(screen.getByLabelText('规则类型'), { target: { value: 'rsi_threshold' } });
@@ -132,7 +194,11 @@ describe('AlertRuleForm', () => {
   });
 
   it('rejects indicator period combinations that exceed fetchable history', () => {
-    render(<AlertRuleForm onSubmit={onSubmit} />);
+    render(
+      <MemoryRouter>
+        <AlertRuleForm onSubmit={onSubmit} />
+      </MemoryRouter>,
+    );
 
     fireEvent.change(screen.getByLabelText('标的代码'), { target: { value: '600519' } });
     fireEvent.change(screen.getByLabelText('规则类型'), { target: { value: 'macd_cross' } });
@@ -146,7 +212,11 @@ describe('AlertRuleForm', () => {
   });
 
   it('rejects empty required technical indicator thresholds before submit', () => {
-    render(<AlertRuleForm onSubmit={onSubmit} />);
+    render(
+      <MemoryRouter>
+        <AlertRuleForm onSubmit={onSubmit} />
+      </MemoryRouter>,
+    );
 
     fireEvent.change(screen.getByLabelText('标的代码'), { target: { value: '600519' } });
     fireEvent.change(screen.getByLabelText('规则类型'), { target: { value: 'rsi_threshold' } });
@@ -163,7 +233,11 @@ describe('AlertRuleForm', () => {
   });
 
   it('rejects invalid numeric thresholds before submit', () => {
-    render(<AlertRuleForm onSubmit={onSubmit} />);
+    render(
+      <MemoryRouter>
+        <AlertRuleForm onSubmit={onSubmit} />
+      </MemoryRouter>,
+    );
 
     fireEvent.change(screen.getByLabelText('标的代码'), { target: { value: '600519' } });
     fireEvent.change(screen.getByLabelText('价格阈值'), { target: { value: '0' } });
@@ -174,7 +248,11 @@ describe('AlertRuleForm', () => {
   });
 
   it('rejects invalid stock code format before submit', () => {
-    render(<AlertRuleForm onSubmit={onSubmit} />);
+    render(
+      <MemoryRouter>
+        <AlertRuleForm onSubmit={onSubmit} />
+      </MemoryRouter>,
+    );
 
     fireEvent.change(screen.getByLabelText('标的代码'), { target: { value: 'aapl-2026' } });
     fireEvent.change(screen.getByLabelText('价格阈值'), { target: { value: '200' } });
@@ -185,7 +263,11 @@ describe('AlertRuleForm', () => {
   });
 
   it('filters alert types and submits a watchlist rule payload', async () => {
-    render(<AlertRuleForm onSubmit={onSubmit} />);
+    render(
+      <MemoryRouter>
+        <AlertRuleForm onSubmit={onSubmit} />
+      </MemoryRouter>,
+    );
 
     fireEvent.change(screen.getByLabelText('目标范围'), { target: { value: 'watchlist' } });
     expect(screen.queryByText('组合止损')).not.toBeInTheDocument();
@@ -202,8 +284,33 @@ describe('AlertRuleForm', () => {
     });
   });
 
+  it('lists watchlist codes under watchlist scope and switches to single_symbol on click', async () => {
+    getWatchlist.mockResolvedValue(['600519', 'BABA']);
+    render(
+      <MemoryRouter>
+        <AlertRuleForm onSubmit={onSubmit} />
+      </MemoryRouter>,
+    );
+
+    fireEvent.change(screen.getByLabelText('目标范围'), { target: { value: 'watchlist' } });
+
+    expect(await screen.findByTestId('alert-watchlist-codes')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '600519' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'BABA' })).toBeInTheDocument();
+    expect(screen.getByText('整份自选')).toBeInTheDocument();
+    expect(screen.getByText(/共 2 只/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'BABA' }));
+    expect(screen.getByLabelText('目标范围')).toHaveValue('single_symbol');
+    expect(screen.getByLabelText('标的代码')).toHaveValue('BABA');
+  });
+
   it('loads accounts and submits portfolio stop-loss mode', async () => {
-    render(<AlertRuleForm onSubmit={onSubmit} />);
+    render(
+      <MemoryRouter>
+        <AlertRuleForm onSubmit={onSubmit} />
+      </MemoryRouter>,
+    );
 
     fireEvent.change(screen.getByLabelText('目标范围'), { target: { value: 'portfolio_account' } });
     await waitFor(() => expect(getAccounts).toHaveBeenCalledWith(false));
@@ -234,20 +341,28 @@ describe('AlertRuleForm', () => {
     expect(screen.queryByText('组合回撤')).not.toBeInTheDocument();
   });
 
-  it('shows JP/KR options for market region in Chinese UI mode', () => {
-    render(<AlertRuleForm onSubmit={onSubmit} />);
+  it('shows cn/hk/us market region options in Chinese UI mode', () => {
+    render(
+      <MemoryRouter>
+        <AlertRuleForm onSubmit={onSubmit} />
+      </MemoryRouter>,
+    );
 
     fireEvent.change(screen.getByLabelText('目标范围'), { target: { value: 'market' } });
 
     expect(screen.getByRole('option', { name: 'A 股（cn）' })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: '港股（hk）' })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: '美股（us）' })).toBeInTheDocument();
-    expect(screen.getByRole('option', { name: '日股（jp）' })).toBeInTheDocument();
-    expect(screen.getByRole('option', { name: '韩股（kr）' })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: '日股（jp）' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: '韩股（kr）' })).not.toBeInTheDocument();
   });
 
   it('submits a market light status rule payload', async () => {
-    render(<AlertRuleForm onSubmit={onSubmit} />);
+    render(
+      <MemoryRouter>
+        <AlertRuleForm onSubmit={onSubmit} />
+      </MemoryRouter>,
+    );
 
     fireEvent.change(screen.getByLabelText('目标范围'), { target: { value: 'market' } });
     expect(screen.getByRole('option', { name: 'A 股（cn）' })).toBeInTheDocument();
@@ -281,7 +396,11 @@ describe('AlertRuleForm', () => {
   });
 
   it('submits a market light score-drop rule payload', async () => {
-    render(<AlertRuleForm onSubmit={onSubmit} />);
+    render(
+      <MemoryRouter>
+        <AlertRuleForm onSubmit={onSubmit} />
+      </MemoryRouter>,
+    );
 
     fireEvent.change(screen.getByLabelText('目标范围'), { target: { value: 'market' } });
     fireEvent.change(screen.getByLabelText('市场区域'), { target: { value: 'us' } });
@@ -301,7 +420,11 @@ describe('AlertRuleForm', () => {
 
   it('keeps all account option when account loading fails', async () => {
     getAccounts.mockRejectedValueOnce(new Error('boom'));
-    render(<AlertRuleForm onSubmit={onSubmit} />);
+    render(
+      <MemoryRouter>
+        <AlertRuleForm onSubmit={onSubmit} />
+      </MemoryRouter>,
+    );
 
     fireEvent.change(screen.getByLabelText('目标范围'), { target: { value: 'portfolio_holdings' } });
     expect(await screen.findByRole('alert')).toHaveTextContent('boom');
@@ -310,7 +433,11 @@ describe('AlertRuleForm', () => {
 
   it('keeps form values when submit reports failure', async () => {
     onSubmit.mockResolvedValueOnce(false);
-    render(<AlertRuleForm onSubmit={onSubmit} />);
+    render(
+      <MemoryRouter>
+        <AlertRuleForm onSubmit={onSubmit} />
+      </MemoryRouter>,
+    );
 
     fireEvent.change(screen.getByLabelText('标的代码'), { target: { value: 'aapl' } });
     fireEvent.change(screen.getByLabelText('价格阈值'), { target: { value: '200' } });
