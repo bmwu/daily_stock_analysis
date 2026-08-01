@@ -23,12 +23,90 @@ from src.services.trading_signal_monitor import (
 logger = logging.getLogger(__name__)
 
 CN_TZ = timezone(timedelta(hours=8))
+_INDEX_QUOTE_CACHE: Dict[str, Any] = {"at": 0.0, "rows": [], "errors": []}
+_INDEX_QUOTE_CACHE_TTL_SECONDS = 60.0
 
-INDEX_META = [
-    {"code": "000001", "name": "上证指数", "symbol": "sh000001"},
-    {"code": "399001", "name": "深证成指", "symbol": "sz399001"},
-    {"code": "399006", "name": "创业板指", "symbol": "sz399006"},
+# Static catalog for Market Radar index strip + “更多” drawer.
+# ``tencent_symbol`` enables fast CN batch quotes; other regions use get_main_indices.
+INDEX_CATALOG: List[Dict[str, str]] = [
+    {"code": "000001", "name": "上证指数", "region": "cn", "tencent_symbol": "sh000001"},
+    {"code": "399001", "name": "深证成指", "region": "cn", "tencent_symbol": "sz399001"},
+    {"code": "399006", "name": "创业板指", "region": "cn", "tencent_symbol": "sz399006"},
+    {"code": "000688", "name": "科创50", "region": "cn", "tencent_symbol": "sh000688"},
+    {"code": "000016", "name": "上证50", "region": "cn", "tencent_symbol": "sh000016"},
+    {"code": "000300", "name": "沪深300", "region": "cn", "tencent_symbol": "sh000300"},
+    {"code": "HSI", "name": "恒生指数", "region": "hk"},
+    {"code": "HSTECH", "name": "恒生科技指数", "region": "hk"},
+    {"code": "HSCEI", "name": "国企指数", "region": "hk"},
+    {"code": "SPX", "name": "标普500", "region": "us"},
+    {"code": "IXIC", "name": "纳斯达克", "region": "us"},
+    {"code": "DJI", "name": "道琼斯", "region": "us"},
+    {"code": "N225", "name": "日经225", "region": "jp"},
+    {"code": "TOPX", "name": "东证指数", "region": "jp"},
+    {"code": "KS11", "name": "KOSPI", "region": "kr"},
+    {"code": "KQ11", "name": "KOSDAQ", "region": "kr"},
+    {"code": "TWII", "name": "台湾加权", "region": "tw"},
 ]
+
+# Backward-compatible alias used by older CN-only Tencent path.
+INDEX_META = [
+    {
+        "code": item["code"],
+        "name": item["name"],
+        "symbol": item.get("tencent_symbol") or "",
+    }
+    for item in INDEX_CATALOG
+    if item.get("region") == "cn" and item.get("tencent_symbol")
+]
+
+DEFAULT_FAVORITE_INDEX_CODES = ["000001", "399001", "399006"]
+
+
+def index_catalog_payload() -> List[Dict[str, str]]:
+    return [
+        {"code": item["code"], "name": item["name"], "region": item["region"]}
+        for item in INDEX_CATALOG
+    ]
+
+
+def _index_code_aliases(code: str) -> set[str]:
+    raw = (code or "").strip()
+    if not raw:
+        return set()
+    aliases = {raw, raw.upper(), raw.lower()}
+    if raw.lower().startswith(("sh", "sz")) and len(raw) > 2:
+        aliases.add(raw[2:])
+        aliases.add(raw[2:].upper())
+    return aliases
+
+
+def _normalize_index_quote(
+    *,
+    code: str,
+    name: str,
+    region: str,
+    row: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    payload = row if isinstance(row, dict) else {}
+    return {
+        "code": code,
+        "name": str(payload.get("name") or name),
+        "region": region,
+        "price": payload.get("price")
+        if payload.get("price") is not None
+        else payload.get("current")
+        if payload.get("current") is not None
+        else payload.get("close")
+        if payload.get("close") is not None
+        else payload.get("latest"),
+        "change_pct": payload.get("change_pct")
+        if payload.get("change_pct") is not None
+        else payload.get("change_percent"),
+        "change": payload.get("change")
+        if payload.get("change") is not None
+        else payload.get("change_amount"),
+        "amount": payload.get("amount"),
+    }
 
 
 def _now_iso() -> str:
@@ -137,6 +215,7 @@ class MarketRadarService:
             "updated_at": _now_iso(),
             "provider": "tencent/shared-data-provider",
             "indices": indices,
+            "index_catalog": index_catalog_payload(),
             "account": account,
             "holdings": [by_code[c] for c in holding_codes if c in by_code],
             "watchlist": watchlist_items,
@@ -261,73 +340,116 @@ class MarketRadarService:
         }
 
     def _load_indices(self, errors: List[Dict[str, str]]) -> List[Dict[str, Any]]:
-        # Prefer Tencent batch (fast, same as 持仓雷达); skip slow multi-source index chain.
-        try:
-            from data_provider.akshare_fetcher import TENCENT_REALTIME_ENDPOINT
+        """Load quotes for the full index catalog (CN via Tencent, others via get_main_indices)."""
+        import time as _time
 
-            symbols = [item["symbol"] for item in INDEX_META]
-            url = f"http://{TENCENT_REALTIME_ENDPOINT}={','.join(symbols)}"
-            headers = {
-                "Referer": "http://finance.qq.com",
-                "User-Agent": random.choice(USER_AGENTS),
-            }
-            response = requests.get(url, headers=headers, timeout=5)
-            response.encoding = "gbk"
-            content = response.text
-            results = []
-            for meta in INDEX_META:
-                marker = f'v_{meta["symbol"]}="'
-                start = content.find(marker)
-                if start < 0:
-                    continue
-                start += len(marker)
-                end = content.find('"', start)
-                if end < 0:
-                    continue
-                fields = content[start:end].split("~")
-                if len(fields) < 33:
-                    continue
-                try:
-                    price = float(fields[3])
-                    change_pct = float(fields[32]) if fields[32] else 0.0
-                    change = float(fields[31]) if len(fields) > 31 and fields[31] else None
-                except (TypeError, ValueError):
-                    continue
-                results.append(
-                    {
-                        "code": meta["code"],
-                        "name": fields[1] or meta["name"],
-                        "price": price,
-                        "change_pct": change_pct,
-                        "change": change,
-                        "amount": None,
-                    }
-                )
-            if results:
-                return results
-        except Exception as exc:
-            errors.append({"code": "indices", "error": f"tencent_indices:{type(exc).__name__}"})
+        now = _time.monotonic()
+        cached_at = float(_INDEX_QUOTE_CACHE.get("at") or 0.0)
+        if now - cached_at < _INDEX_QUOTE_CACHE_TTL_SECONDS and _INDEX_QUOTE_CACHE.get("rows"):
+            for err in _INDEX_QUOTE_CACHE.get("errors") or []:
+                if isinstance(err, dict):
+                    errors.append(err)
+            return list(_INDEX_QUOTE_CACHE["rows"])
 
-        try:
-            rows = self.data_manager.get_main_indices(region="cn") or []
-            normalized = []
+        local_errors: List[Dict[str, str]] = []
+        by_code: Dict[str, Dict[str, Any]] = {}
+
+        # 1) Fast CN path via Tencent batch.
+        cn_items = [item for item in INDEX_CATALOG if item.get("region") == "cn" and item.get("tencent_symbol")]
+        if cn_items:
+            try:
+                from data_provider.akshare_fetcher import TENCENT_REALTIME_ENDPOINT
+
+                symbols = [item["tencent_symbol"] for item in cn_items]
+                url = f"http://{TENCENT_REALTIME_ENDPOINT}={','.join(symbols)}"
+                headers = {
+                    "Referer": "http://finance.qq.com",
+                    "User-Agent": random.choice(USER_AGENTS),
+                }
+                response = requests.get(url, headers=headers, timeout=5)
+                response.encoding = "gbk"
+                content = response.text
+                for meta in cn_items:
+                    marker = f'v_{meta["tencent_symbol"]}="'
+                    start = content.find(marker)
+                    if start < 0:
+                        continue
+                    start += len(marker)
+                    end = content.find('"', start)
+                    if end < 0:
+                        continue
+                    fields = content[start:end].split("~")
+                    if len(fields) < 33:
+                        continue
+                    try:
+                        price = float(fields[3])
+                        change_pct = float(fields[32]) if fields[32] else 0.0
+                        change = float(fields[31]) if len(fields) > 31 and fields[31] else None
+                    except (TypeError, ValueError):
+                        continue
+                    by_code[meta["code"]] = _normalize_index_quote(
+                        code=meta["code"],
+                        name=fields[1] or meta["name"],
+                        region="cn",
+                        row={"price": price, "change_pct": change_pct, "change": change},
+                    )
+            except Exception as exc:
+                local_errors.append({"code": "indices", "error": f"tencent_indices:{type(exc).__name__}"})
+
+        # 2) Fill missing CN + non-CN via DataFetcherManager.get_main_indices.
+        regions = sorted({item["region"] for item in INDEX_CATALOG})
+        for region in regions:
+            catalog_in_region = [item for item in INDEX_CATALOG if item["region"] == region]
+            if all(item["code"] in by_code for item in catalog_in_region):
+                continue
+            try:
+                rows = self.data_manager.get_main_indices(region=region) or []
+            except Exception as exc:
+                local_errors.append({"code": f"indices_{region}", "error": f"main_indices:{type(exc).__name__}"})
+                continue
             for row in rows:
                 if not isinstance(row, dict):
                     continue
-                normalized.append(
-                    {
-                        "code": str(row.get("code") or row.get("symbol") or ""),
-                        "name": str(row.get("name") or ""),
-                        "price": row.get("price") or row.get("close") or row.get("latest"),
-                        "change_pct": row.get("change_pct") or row.get("change_percent"),
-                        "change": row.get("change") or row.get("change_amount"),
-                        "amount": row.get("amount"),
-                    }
+                raw_code = str(row.get("code") or row.get("symbol") or "").strip()
+                aliases = _index_code_aliases(raw_code)
+                matched = next(
+                    (
+                        item
+                        for item in catalog_in_region
+                        if item["code"] not in by_code
+                        and (item["code"] in aliases or bool(aliases & _index_code_aliases(item["code"])))
+                    ),
+                    None,
                 )
-            return normalized[:6]
-        except Exception as exc:
-            errors.append({"code": "indices", "error": f"main_indices:{type(exc).__name__}"})
-            return []
+                if not matched:
+                    continue
+                by_code[matched["code"]] = _normalize_index_quote(
+                    code=matched["code"],
+                    name=matched["name"],
+                    region=matched["region"],
+                    row=row,
+                )
+
+        # Preserve catalog order; include catalog entries even when quote is missing.
+        results: List[Dict[str, Any]] = []
+        for item in INDEX_CATALOG:
+            quoted = by_code.get(item["code"])
+            if quoted:
+                results.append(quoted)
+            else:
+                results.append(
+                    _normalize_index_quote(
+                        code=item["code"],
+                        name=item["name"],
+                        region=item["region"],
+                    )
+                )
+
+        _INDEX_QUOTE_CACHE["at"] = now
+        _INDEX_QUOTE_CACHE["rows"] = list(results)
+        _INDEX_QUOTE_CACHE["errors"] = list(local_errors)
+        errors.extend(local_errors)
+        return results
 
     def _load_watchlist(self, errors: List[Dict[str, str]]) -> List[str]:
         try:

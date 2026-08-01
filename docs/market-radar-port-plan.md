@@ -44,11 +44,13 @@
 - 路由：侧边栏「实时大盘」→ `/market-radar`
 - 持仓/自选复用现有 Portfolio / watchlist API；持仓管理跳转 `/portfolio`，不用 localStorage 再造账本
 - 仍依赖 `ENABLE_TRADING_SIGNALS=true`
+- 指数区：主条显示本机「常用」指数；「更多」抽屉展示跨市场全表（可按区 Tab 筛选）并设/取消常用（localStorage）
 
 ### M3 — 增强（待做）
 
 - 分析 context 注入触发 R-id
-- 贵金属/美股外部行情
+- 贵金属/美股外部行情（指数目录已含部分海外指数；个股报价/分时仍偏 A 股）
+- 点选主条指数后按所属市场过滤持仓/自选（已定交互，暂未做）
 - B↔R 对照收敛（可选）
 
 ## 四色含义

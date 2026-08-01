@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [改进] 实时大盘指数区支持常用指数主条 +「更多」抽屉（跨市场全表、按区筛选、设/取消常用，偏好存本机）。
 - [改进] 用量页取消 `max-w-7xl` 限制，与持仓页同宽铺满 Shell 主栏。
 - [改进] 回测页取消 `max-w-5xl` / `max-w-4xl` 限制，与持仓页同宽铺满 Shell 主栏。
 - [改进] AI 建议页取消 `max-w-7xl` 限制，与持仓页同宽铺满 Shell 主栏。
