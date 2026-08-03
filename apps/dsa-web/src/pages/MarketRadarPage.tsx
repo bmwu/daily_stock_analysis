@@ -8,8 +8,9 @@ import { RuleBadges, SortHeader } from '../components/market-radar/chartUtils';
 import { IndexMoreDrawer } from '../components/market-radar/IndexMoreDrawer';
 import {
   formatAmount,
+  formatCompactMoney,
+  formatMoneyAmount,
   levelLabel,
-  money,
   number2,
   signed,
   tradingMinuteOfDay,
@@ -229,6 +230,7 @@ const MarketRadarPage: React.FC = () => {
   }
 
   const account = data?.account;
+  const accountCurrency = account?.currency || 'CNY';
   const totalAsset = n(account?.totalAsset);
   const cash = n(account?.cash);
   const cashPct = totalAsset > 0 ? (cash / totalAsset) * 100 : 0;
@@ -316,16 +318,16 @@ const MarketRadarPage: React.FC = () => {
           <article className="index-card account-summary">
             <div className="index-title">
               <span>账户概览</span>
-              <small>组合快照</small>
+              <small>组合快照 · {accountCurrency}</small>
             </div>
             <div className="index-main">
-              <strong>¥{money.format(totalAsset)}</strong>
+              <strong>{formatMoneyAmount(totalAsset, accountCurrency)}</strong>
               <span className="neutral">现金 {number2.format(cashPct)}%</span>
             </div>
             <div className="index-foot">
-              <span>持仓 {formatAmount(n(account?.marketValue))}</span>
+              <span>持仓 {formatCompactMoney(n(account?.marketValue), accountCurrency)}</span>
               <span className={n(account?.totalProfit ?? account?.unrealizedPnl) >= 0 ? 'up' : 'down'}>
-                累计 {formatAmount(n(account?.totalProfit ?? account?.unrealizedPnl))}
+                累计 {formatCompactMoney(n(account?.totalProfit ?? account?.unrealizedPnl), accountCurrency)}
               </span>
             </div>
           </article>
@@ -529,7 +531,7 @@ const MarketRadarPage: React.FC = () => {
                       <span>
                         <b>
                           {portfolioTab === 'holdings'
-                            ? `¥${money.format(n(item.marketValue))}`
+                            ? formatMoneyAmount(n(item.marketValue), accountCurrency)
                             : formatAmount(n(item.amount))}
                         </b>
                         <small>
@@ -542,7 +544,7 @@ const MarketRadarPage: React.FC = () => {
                         {portfolioTab === 'holdings' ? (
                           <>
                             <b className={item.profit != null && n(item.profit) >= 0 ? 'up' : 'down'}>
-                              {item.profit == null ? '待核实' : formatAmount(n(item.profit))}
+                              {item.profit == null ? '待核实' : formatCompactMoney(n(item.profit), accountCurrency)}
                             </b>
                             <small>{item.profitPercent == null ? '成本异常' : signed(n(item.profitPercent), '%')}</small>
                           </>
