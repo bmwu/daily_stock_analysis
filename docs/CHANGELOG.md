@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [修复] 告警推送标题与正文补充规则名称（`规则：...`），不再只显示技术指标描述。
 - [改进] 持仓明细「AI 建议」默认只显示居中的动作/周期；风险与观察改为可交互悬停 tooltip（可移入复制，约 1 秒后才关闭），并解析 JSON 数组为列表。
 - [修复] 首页日 K：通用日线转换补齐 `date`，并丢弃无日期的旧图表缓存，避免美股等非 A 股（如 BABA）K 线 X 轴无日期。
 - [改进] 持仓页操作反馈统一为顶部居中 toast（约 3 秒自动消失）：分析成功/失败、操作提示、建账户结果、汇率刷新结果与录入/删除失败等，不再插入页面正文。

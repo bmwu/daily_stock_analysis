@@ -60,6 +60,7 @@ class RuntimeAlertRule:
     cooldown_policy: Optional[Dict[str, Any]] = None
     effective_target: Optional[str] = None
     display_target: Optional[str] = None
+    name: Optional[str] = None
 
 
 @dataclass
@@ -223,6 +224,7 @@ class AlertWorker:
                             cooldown_policy=cooldown_policy,
                             effective_target=payload.effective_target,
                             display_target=payload.display_target,
+                            name=str(getattr(row, "name", "") or "").strip() or None,
                         )
                     )
                     seen_keys.add(payload.key)
@@ -235,7 +237,10 @@ class AlertWorker:
             if key in seen_keys:
                 logger.info("[AlertWorker] Skip duplicate legacy alert rule: %s", key)
                 continue
-            runtime_rules.append(RuntimeAlertRule(key=key, rule=rule, source="legacy_env"))
+            legacy_name = str(getattr(rule, "description", "") or "").strip() or None
+            runtime_rules.append(
+                RuntimeAlertRule(key=key, rule=rule, source="legacy_env", name=legacy_name)
+            )
             seen_keys.add(key)
 
         return runtime_rules
@@ -462,6 +467,14 @@ class AlertWorker:
             metadata = {}
         alert_type = self._public_alert_type(getattr(rule, "alert_type", None) or result.get("alert_type"))
         key_hash = hashlib.sha1(str(runtime_rule.key or "").encode("utf-8")).hexdigest()
+        rule_name = self._rule_display_name(runtime_rule)
+        reason = result.get("reason") or result.get("message") or getattr(rule, "description", None)
+        if rule_name and reason:
+            reason_text = str(reason)
+            if rule_name not in reason_text:
+                reason = f"{rule_name}: {reason_text}"
+        elif rule_name and not reason:
+            reason = rule_name
         return {
             "stock_code": stock_code,
             "stock_name": getattr(rule, "stock_name", None),
@@ -471,11 +484,12 @@ class AlertWorker:
             "trace_id": f"alert-rule-{key_hash[:32]}",
             "trigger_source": "alert",
             "action": "alert",
-            "reason": result.get("reason") or result.get("message") or getattr(rule, "description", None),
+            "reason": reason,
             "watch_conditions": self._alert_watch_conditions(runtime_rule, result, alert_type),
             "risk_summary": self._alert_risk_summary(runtime_rule, result),
             "metadata": {
                 "rule_id": self.service._runtime_rule_id(rule),
+                "rule_name": rule_name,
                 "alert_type": alert_type,
                 "severity": runtime_rule.severity,
                 "observed_value": result.get("observed_value"),
@@ -500,7 +514,8 @@ class AlertWorker:
         threshold = result.get("threshold")
         observed = result.get("observed_value")
         target = self._display_target(runtime_rule)
-        parts = [part for part in (target, alert_type) if part]
+        rule_name = self._rule_display_name(runtime_rule)
+        parts = [part for part in (rule_name, target, alert_type) if part]
         if threshold not in (None, ""):
             parts.append(f"threshold={threshold}")
         if observed not in (None, ""):
@@ -510,6 +525,9 @@ class AlertWorker:
     def _alert_risk_summary(self, runtime_rule: RuntimeAlertRule, result: Dict[str, Any]) -> str:
         severity = str(runtime_rule.severity or "warning")
         reason = result.get("reason") or result.get("message") or "Alert triggered"
+        rule_name = self._rule_display_name(runtime_rule)
+        if rule_name and rule_name not in str(reason):
+            return f"{severity}: {rule_name}: {reason}"
         return f"{severity}: {reason}"
 
     @staticmethod
@@ -638,8 +656,15 @@ class AlertWorker:
         from src.notification import NotificationBuilder, NotificationService
 
         notification_service = self.notifier or NotificationService()
-        title = f"Event Alert | {self._display_target(runtime_rule)}"
-        content = result.get("reason") or result.get("message") or runtime_rule.rule.description or "Alert triggered"
+        target = self._display_target(runtime_rule)
+        rule_name = self._rule_display_name(runtime_rule)
+        title = f"Event Alert | {rule_name} | {target}" if rule_name else f"Event Alert | {target}"
+        reason = result.get("reason") or result.get("message") or getattr(runtime_rule.rule, "description", None) or "Alert triggered"
+        content_parts = []
+        if rule_name:
+            content_parts.append(f"规则：{rule_name}")
+        content_parts.append(str(reason))
+        content = "\n\n".join(content_parts)
         diagnostics = self._diagnostics_payload(result.get("diagnostics"))
         visibility = diagnostics.get("analysis_visibility") if isinstance(diagnostics.get("analysis_visibility"), dict) else None
         if visibility is None:
@@ -881,6 +906,14 @@ class AlertWorker:
     @staticmethod
     def _display_target(runtime_rule: RuntimeAlertRule) -> str:
         return str(runtime_rule.display_target or runtime_rule.effective_target or getattr(runtime_rule.rule, "stock_code", "") or "?")
+
+    @staticmethod
+    def _rule_display_name(runtime_rule: RuntimeAlertRule) -> Optional[str]:
+        name = str(getattr(runtime_rule, "name", None) or "").strip()
+        if name:
+            return name[:64]
+        description = str(getattr(getattr(runtime_rule, "rule", None), "description", "") or "").strip()
+        return description[:64] if description else None
 
     @staticmethod
     def _cooldown_seconds(runtime_rule: RuntimeAlertRule) -> int:

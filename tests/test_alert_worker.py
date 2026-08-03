@@ -7,7 +7,7 @@ import json
 import os
 import tempfile
 import unittest
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -388,7 +388,9 @@ class AlertWorkerTestCase(unittest.TestCase):
         self.assertIsNone(item["market_phase"])
         self.assertTrue(str(item["trace_id"]).startswith("alert-rule-"))
         self.assertEqual(item["metadata"]["rule_id"], 1)
+        self.assertEqual(item["metadata"]["rule_name"], "Moutai breakout")
         self.assertEqual(item["metadata"]["alert_type"], "price_cross")
+        self.assertIn("Moutai breakout", item["reason"])
         self.assertEqual(self._triggers(status="triggered")[0]["decision_signal_summary"]["id"], item["id"])
 
     def test_p6_alert_signal_trace_id_is_idempotent_for_same_rule(self) -> None:
@@ -558,10 +560,52 @@ class AlertWorkerTestCase(unittest.TestCase):
         self.assertEqual(triggers[0]["threshold"], 1800.0)
         notifier.send_with_results.assert_called_once()
         self.assertEqual(notifier.send_with_results.call_args.kwargs["route_type"], "alert")
+        alert_text = notifier.send_with_results.call_args.args[0]
+        self.assertIn("Event Alert | Moutai breakout | 600519", alert_text)
+        self.assertIn("规则：Moutai breakout", alert_text)
         notifications = self._notifications(trigger_id=triggers[0]["id"])
         self.assertEqual(len(notifications), 1)
         self.assertEqual(notifications[0]["channel"], "custom")
         self.assertTrue(notifications[0]["success"])
+
+    def test_alert_notification_includes_rule_name_for_technical_indicator(self) -> None:
+        self._create_rule(
+            name="AAPL MACD 死叉",
+            target="AAPL",
+            alert_type="macd_cross",
+            parameters={
+                "direction": "bearish_cross",
+                "fast_period": 12,
+                "slow_period": 26,
+                "signal_period": 9,
+            },
+        )
+        notifier = self._notifier()
+        worker = AlertWorker(config_provider=lambda: self._config(), service=self.service, notifier=notifier)
+
+        async def _fake_evaluate(_rule, _monitor, daily_cache=None):
+            return {
+                "rule_id": 1,
+                "status": "triggered",
+                "record_status": "triggered",
+                "triggered": True,
+                "reason": "AAPL MACD DIF/DEA bearish_cross: delta = -1.3667",
+                "message": "AAPL MACD DIF/DEA bearish_cross: delta = -1.3667",
+                "observed_value": -1.3667,
+                "threshold": 0.0,
+                "data_source": "daily_data",
+                "data_timestamp": datetime(2026, 8, 3, 15, 0, 0),
+            }
+
+        with patch.object(self.service, "_evaluate_rule", new=_fake_evaluate):
+            stats = worker.run_once()
+
+        self.assertEqual(stats["triggered"], 1)
+        notifier.send_with_results.assert_called_once()
+        alert_text = notifier.send_with_results.call_args.args[0]
+        self.assertIn("Event Alert | AAPL MACD 死叉 | AAPL", alert_text)
+        self.assertIn("规则：AAPL MACD 死叉", alert_text)
+        self.assertIn("AAPL MACD DIF/DEA bearish_cross: delta = -1.3667", alert_text)
 
     def test_create_trigger_if_absent_rejects_non_dedupable_history(self) -> None:
         cases = [
