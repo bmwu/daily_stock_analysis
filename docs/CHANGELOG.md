@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [改进] 首页大盘账户/持仓金额按账户币种显示符号（如 USD `$`），不再写死 `¥`。
 - [改进] 告警推送阶段摘要取值本地化：阶段/市场/触发来源/数据质量等级与 `quote: fallback` 类限制按 `REPORT_LANGUAGE` 显示（如 `盘中`、`美股`、`告警`、`可用`、`行情：降级`）。
 - [改进] 同一轮告警若多条规则挂到同一条 AI 决策信号，合并为一条通知并列出全部触发规则。
 - [改进] 告警推送文案按 `REPORT_LANGUAGE` 本地化（zh/en/ko）；Web 告警中心页壳层文案跟随 UI 语言。
