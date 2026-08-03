@@ -545,12 +545,15 @@ def build_event_monitor_from_config(config=None, notifier=None) -> Optional[Even
         return None
 
     from src.notification import NotificationBuilder, NotificationService
+    from src.report_language import normalize_report_language
+    from src.services.alert_notification_text import get_alert_notification_labels
 
     notification_service = notifier or NotificationService()
+    labels = get_alert_notification_labels(normalize_report_language(getattr(config, "report_language", "zh")))
 
     def _notify(triggered: TriggeredAlert) -> None:
-        title = f"Event Alert | {triggered.rule.stock_code}"
-        content = triggered.message or triggered.rule.description or "Alert triggered"
+        title = f"{labels['event_alert_title']} | {triggered.rule.stock_code}"
+        content = triggered.message or triggered.rule.description or labels["alert_triggered_fallback"]
         alert_text = NotificationBuilder.build_simple_alert(title=title, content=content, alert_type="warning")
         sent = notification_service.send(alert_text, route_type="alert")
         if not sent:

@@ -189,15 +189,62 @@ def test_format_public_phase_pack_excerpt_limits_and_redacts_public_fields() -> 
         report_language="zh",
     )
 
-    assert "阶段：intraday" in excerpt
-    assert "触发来源：portfolio" in excerpt
+    assert "阶段：盘中" in excerpt
+    assert "市场：A股" in excerpt
+    assert "触发来源：持仓" in excerpt
     assert "摘要来源：最近分析快照" in excerpt
     assert "盘中数据提示" in excerpt
-    assert "数据质量: limited" in excerpt
-    assert "限制: quote stale" in excerpt
-    assert "限制: [REDACTED]" in excerpt
+    assert "数据质量：受限" in excerpt
+    assert "限制：quote stale" in excerpt
+    assert "限制：[REDACTED]" in excerpt
     assert "news missing" not in excerpt
     assert "api_key=secret" not in excerpt
+    assert "阶段：intraday" not in excerpt
+
+
+def test_format_public_phase_pack_excerpt_localizes_quality_block_limitations() -> None:
+    excerpt = format_public_phase_pack_excerpt(
+        {"phase": "intraday", "market": "us", "trigger_source": "alert"},
+        {
+            "data_quality": {
+                "level": "usable",
+                "limitations": [
+                    "quote: fallback",
+                    "technical: partial",
+                    "news: missing",
+                ],
+            }
+        },
+        source="alert_trigger_market_context",
+        report_language="zh",
+    )
+
+    assert "数据质量：可用" in excerpt
+    assert "限制：行情：降级" in excerpt
+    assert "限制：技术：部分可用" in excerpt
+    assert "quote: fallback" not in excerpt
+    assert "technical: partial" not in excerpt
+    assert "news: missing" not in excerpt
+
+
+def test_format_public_phase_pack_excerpt_localizes_english_values() -> None:
+    excerpt = format_public_phase_pack_excerpt(
+        {
+            "phase": "intraday",
+            "market": "us",
+            "trigger_source": "alert",
+            "is_partial_bar": True,
+        },
+        source="alert_trigger_market_context",
+        report_language="en",
+    )
+
+    assert "phase: Intraday" in excerpt
+    assert "market: US" in excerpt
+    assert "trigger: alert" in excerpt
+    assert "source: alert trigger context" in excerpt
+    assert "partial-bar warning" in excerpt
+    assert "阶段：" not in excerpt
 
 
 def test_format_public_phase_pack_excerpt_returns_empty_without_summary_or_pack() -> None:

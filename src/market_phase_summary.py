@@ -48,6 +48,78 @@ _PUBLIC_SOURCE_LABELS_EN = {
     "evaluator_snapshot": "evaluator snapshot",
     "legacy_text": "legacy text",
 }
+_TRIGGER_SOURCE_LABELS_ZH = {
+    "alert": "告警",
+    "api": "API",
+    "schedule": "定时任务",
+    "cli": "命令行",
+    "bot": "机器人",
+    "service": "服务",
+    "system": "系统",
+    "portfolio": "持仓",
+    "web": "Web",
+    "manual": "手动",
+}
+_TRIGGER_SOURCE_LABELS_EN = {
+    "alert": "alert",
+    "api": "API",
+    "schedule": "schedule",
+    "cli": "CLI",
+    "bot": "bot",
+    "service": "service",
+    "system": "system",
+    "portfolio": "portfolio",
+    "web": "web",
+    "manual": "manual",
+}
+_DATA_QUALITY_LEVEL_LABELS_ZH = {
+    "good": "良好",
+    "usable": "可用",
+    "limited": "受限",
+    "poor": "较差",
+}
+_DATA_QUALITY_LEVEL_LABELS_EN = {
+    "good": "good",
+    "usable": "usable",
+    "limited": "limited",
+    "poor": "poor",
+}
+_BLOCK_LABELS_ZH = {
+    "quote": "行情",
+    "daily_bars": "日线",
+    "technical": "技术",
+    "news": "新闻",
+    "fundamentals": "基本面",
+    "chip": "筹码",
+}
+_BLOCK_LABELS_EN = {
+    "quote": "quote",
+    "daily_bars": "daily bars",
+    "technical": "technical",
+    "news": "news",
+    "fundamentals": "fundamentals",
+    "chip": "chip",
+}
+_BLOCK_STATUS_LABELS_ZH = {
+    "available": "可用",
+    "missing": "缺失",
+    "not_supported": "不支持",
+    "fallback": "降级",
+    "stale": "过期",
+    "estimated": "估算",
+    "partial": "部分可用",
+    "fetch_failed": "抓取失败",
+}
+_BLOCK_STATUS_LABELS_EN = {
+    "available": "available",
+    "missing": "missing",
+    "not_supported": "not supported",
+    "fallback": "fallback",
+    "stale": "stale",
+    "estimated": "estimated",
+    "partial": "partial",
+    "fetch_failed": "fetch failed",
+}
 _MARKET_STATUS_PREFIX = {
     "zh": "市场状态",
     "en": "Market status",
@@ -199,23 +271,26 @@ def format_public_phase_pack_excerpt(
         phase = _safe_text(phase_summary.get("phase")) or "unknown"
         market = _safe_text(phase_summary.get("market"))
         trigger_source = _safe_text(phase_summary.get("trigger_source"))
+        phase_label = _phase_label(phase, lang)
+        market_label = _market_label(market, lang) if market else ""
+        trigger_label = _trigger_source_label(trigger_source, lang) if trigger_source else ""
         if lang == "en":
-            parts = [f"phase: {phase}"]
-            if market:
-                parts.append(f"market: {market}")
-            if trigger_source:
-                parts.append(f"trigger: {trigger_source}")
+            parts = [f"phase: {phase_label}"]
+            if market_label:
+                parts.append(f"market: {market_label}")
+            if trigger_label:
+                parts.append(f"trigger: {trigger_label}")
             if source_label:
                 parts.append(f"source: {source_label}")
             lines.append("- " + " | ".join(parts))
             if phase_summary.get("is_partial_bar") is True:
                 lines.append("- partial-bar warning: intraday data may be incomplete")
         else:
-            parts = [f"阶段：{phase}"]
-            if market:
-                parts.append(f"市场：{market}")
-            if trigger_source:
-                parts.append(f"触发来源：{trigger_source}")
+            parts = [f"阶段：{phase_label}"]
+            if market_label:
+                parts.append(f"市场：{market_label}")
+            if trigger_label:
+                parts.append(f"触发来源：{trigger_label}")
             if source_label:
                 parts.append(f"摘要来源：{source_label}")
             lines.append("- " + " | ".join(parts))
@@ -226,10 +301,16 @@ def format_public_phase_pack_excerpt(
     if isinstance(quality, Mapping):
         level = _safe_text(quality.get("level"))
         if level:
-            lines.append(f"- {'data quality' if lang == 'en' else '数据质量'}: {level}")
+            level_label = _data_quality_level_label(level, lang)
+            prefix = "data quality" if lang == "en" else "数据质量"
+            separator = ": " if lang == "en" else "："
+            lines.append(f"- {prefix}{separator}{level_label}")
         limitations = _list_strings(quality.get("limitations"), limit=2)
         for item in limitations:
-            lines.append(f"- {'limitation' if lang == 'en' else '限制'}: {item}")
+            limitation_label = _limitation_label(item, lang)
+            prefix = "limitation" if lang == "en" else "限制"
+            separator = ": " if lang == "en" else "："
+            lines.append(f"- {prefix}{separator}{limitation_label}")
 
     return "\n".join(lines)
 
@@ -286,6 +367,48 @@ def _source_label(value: Any, lang: str) -> Optional[str]:
         return None
     labels = _PUBLIC_SOURCE_LABELS_EN if lang == "en" else _PUBLIC_SOURCE_LABELS_ZH
     return labels.get(source, source)
+
+
+def _phase_label(phase: str, lang: str) -> str:
+    labels = _PHASE_LABELS_EN if lang == "en" else _PHASE_LABELS_ZH
+    return labels.get(phase, phase)
+
+
+def _market_label(market: str, lang: str) -> str:
+    market_key = market.lower()
+    labels = _MARKET_LABELS_EN if lang == "en" else _MARKET_LABELS_ZH
+    if market_key in labels:
+        return labels[market_key]
+    return market.upper() if lang == "en" else market
+
+
+def _trigger_source_label(trigger_source: str, lang: str) -> str:
+    key = trigger_source.strip().lower()
+    labels = _TRIGGER_SOURCE_LABELS_EN if lang == "en" else _TRIGGER_SOURCE_LABELS_ZH
+    return labels.get(key, trigger_source)
+
+
+def _data_quality_level_label(level: str, lang: str) -> str:
+    key = level.strip().lower()
+    labels = _DATA_QUALITY_LEVEL_LABELS_EN if lang == "en" else _DATA_QUALITY_LEVEL_LABELS_ZH
+    return labels.get(key, level)
+
+
+def _limitation_label(value: str, lang: str) -> str:
+    text = str(value or "").strip()
+    if not text or ":" not in text:
+        return text
+    raw_key, status = text.split(":", 1)
+    key = raw_key.strip()
+    status_key = status.strip()
+    if not key or not status_key:
+        return text
+    block_labels = _BLOCK_LABELS_EN if lang == "en" else _BLOCK_LABELS_ZH
+    status_labels = _BLOCK_STATUS_LABELS_EN if lang == "en" else _BLOCK_STATUS_LABELS_ZH
+    block_label = block_labels.get(key, key)
+    status_label = status_labels.get(status_key, status_key)
+    separator = ": " if lang == "en" else "："
+    return f"{block_label}{separator}{status_label}"
 
 
 def _safe_text(value: Any) -> str:

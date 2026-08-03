@@ -31,6 +31,8 @@ from src.market_phase_summary import (
     format_public_phase_pack_excerpt,
     render_market_phase_summary,
 )
+from src.report_language import normalize_report_language
+from src.services.alert_notification_text import get_alert_notification_labels
 from src.services.alert_service import AlertService
 from src.services.decision_signal_service import DecisionSignalService
 from src.services.decision_signal_summary import (
@@ -74,6 +76,14 @@ class DBCooldownDecision:
 class TriggerWriteResult:
     trigger_id: Optional[int] = None
     created: bool = False
+
+
+@dataclass
+class PendingAlertNotification:
+    runtime_rule: RuntimeAlertRule
+    result: Dict[str, Any]
+    trigger_id: Optional[int]
+    cooldown_decision: Optional[DBCooldownDecision] = None
 
 
 class AlertWorker:
@@ -144,6 +154,8 @@ class AlertWorker:
         monitor = EventMonitor()
         daily_cache: Dict[Any, Any] = {}
         self._analysis_visibility_cache = {}
+        report_language = normalize_report_language(getattr(config, "report_language", "zh"))
+        pending_notifications: List[PendingAlertNotification] = []
         for runtime_rule in runtime_rules:
             stats["evaluated"] += 1
             try:
@@ -182,23 +194,24 @@ class AlertWorker:
                         stats["cooldown_suppressed"] += 1
                         stats["notification_attempts"] += 1
                         continue
-                    dispatch = self._send_notification_safely(runtime_rule, result)
-                    stats["notification_attempts"] += self._record_notification_attempts_safely(trigger_id, dispatch)
-                    if self._dispatch_has_real_channel_success(dispatch):
-                        self._upsert_db_cooldown_safely(runtime_rule, result)
-                        if cooldown_decision.fallback_key:
-                            self._mark_notified(
-                                cooldown_decision.fallback_key,
-                                ttl_seconds=cooldown_decision.fallback_ttl_seconds,
-                            )
-                        stats["notified"] += 1
+                    pending_notifications.append(
+                        PendingAlertNotification(
+                            runtime_rule=runtime_rule,
+                            result=result,
+                            trigger_id=trigger_id,
+                            cooldown_decision=cooldown_decision,
+                        )
+                    )
                 elif self._should_notify(runtime_rule.key):
-                    dispatch = self._send_notification_safely(runtime_rule, result)
-                    stats["notification_attempts"] += self._record_notification_attempts_safely(trigger_id, dispatch)
-                    if bool(dispatch.success):
-                        self._mark_notified(runtime_rule.key)
-                        stats["notified"] += 1
+                    pending_notifications.append(
+                        PendingAlertNotification(
+                            runtime_rule=runtime_rule,
+                            result=result,
+                            trigger_id=trigger_id,
+                        )
+                    )
 
+        self._dispatch_pending_notifications(pending_notifications, stats, report_language=report_language)
         return stats
 
     def _load_runtime_rules(self, config: Any) -> List[RuntimeAlertRule]:
@@ -652,47 +665,165 @@ class AlertWorker:
     def _db_cooldown_fallback_key(rule_key: str) -> str:
         return f"db_cooldown:{rule_key}"
 
-    def _send_notification(self, runtime_rule: RuntimeAlertRule, result: Dict[str, Any]) -> "NotificationDispatchResult":
+    def _dispatch_pending_notifications(
+        self,
+        pending: List[PendingAlertNotification],
+        stats: Dict[str, int],
+        *,
+        report_language: str,
+    ) -> None:
+        if not pending:
+            return
+
+        grouped: Dict[str, List[PendingAlertNotification]] = {}
+        order: List[str] = []
+        for index, item in enumerate(pending):
+            merge_key = self._decision_signal_merge_key(item.result)
+            group_key = merge_key or f"single:{index}:{item.runtime_rule.key}"
+            if group_key not in grouped:
+                grouped[group_key] = []
+                order.append(group_key)
+            grouped[group_key].append(item)
+
+        for group_key in order:
+            group = grouped[group_key]
+            dispatch = self._send_notifications_safely(group, report_language=report_language)
+            for item in group:
+                stats["notification_attempts"] += self._record_notification_attempts_safely(
+                    item.trigger_id,
+                    dispatch,
+                )
+                if item.runtime_rule.source == "db":
+                    if self._dispatch_has_real_channel_success(dispatch):
+                        self._upsert_db_cooldown_safely(item.runtime_rule, item.result)
+                        cooldown_decision = item.cooldown_decision
+                        if cooldown_decision and cooldown_decision.fallback_key:
+                            self._mark_notified(
+                                cooldown_decision.fallback_key,
+                                ttl_seconds=cooldown_decision.fallback_ttl_seconds,
+                            )
+                        stats["notified"] += 1
+                elif bool(dispatch.success):
+                    self._mark_notified(item.runtime_rule.key)
+                    stats["notified"] += 1
+
+    def _decision_signal_merge_key(self, result: Dict[str, Any]) -> Optional[str]:
+        diagnostics = self._diagnostics_payload(result.get("diagnostics"))
+        summary = diagnostics.get("decision_signal_summary")
+        if not isinstance(summary, dict):
+            return None
+        signal_id = summary.get("id")
+        if signal_id in (None, ""):
+            return None
+        return f"signal:{signal_id}"
+
+    def _send_notifications(
+        self,
+        items: List[PendingAlertNotification],
+        *,
+        report_language: str,
+    ) -> "NotificationDispatchResult":
         from src.notification import NotificationBuilder, NotificationService
 
+        if not items:
+            raise ValueError("items must not be empty")
+
         notification_service = self.notifier or NotificationService()
-        target = self._display_target(runtime_rule)
-        rule_name = self._rule_display_name(runtime_rule)
-        title = f"Event Alert | {rule_name} | {target}" if rule_name else f"Event Alert | {target}"
-        reason = result.get("reason") or result.get("message") or getattr(runtime_rule.rule, "description", None) or "Alert triggered"
-        content_parts = []
-        if rule_name:
-            content_parts.append(f"规则：{rule_name}")
-        content_parts.append(str(reason))
+        labels = get_alert_notification_labels(report_language)
+        alert_text = self._build_notification_text(items, labels=labels, report_language=report_language)
+        return notification_service.send_with_results(alert_text, route_type="alert")
+
+    def _build_notification_text(
+        self,
+        items: List[PendingAlertNotification],
+        *,
+        labels: Dict[str, str],
+        report_language: str,
+    ) -> str:
+        from src.notification import NotificationBuilder
+
+        primary = items[0]
+        targets = []
+        for item in items:
+            target = self._display_target(item.runtime_rule)
+            if target and target not in targets:
+                targets.append(target)
+        target_text = " / ".join(targets) if targets else "?"
+
+        if len(items) == 1:
+            rule_name = self._rule_display_name(primary.runtime_rule)
+            title = (
+                f"{labels['event_alert_title']} | {rule_name} | {target_text}"
+                if rule_name
+                else f"{labels['event_alert_title']} | {target_text}"
+            )
+        else:
+            count_label = labels["rules_count"].format(count=len(items))
+            title = f"{labels['event_alert_title']} | {target_text} | {count_label}"
+
+        content_parts: List[str] = []
+        if len(items) == 1:
+            content_parts.append(self._format_trigger_line(primary, labels=labels))
+        else:
+            content_parts.append(f"{labels['triggered_rules_heading']}:")
+            for index, item in enumerate(items, start=1):
+                content_parts.append(f"{index}. {self._format_trigger_line(item, labels=labels)}")
+
         content = "\n\n".join(content_parts)
-        diagnostics = self._diagnostics_payload(result.get("diagnostics"))
+        diagnostics = self._diagnostics_payload(primary.result.get("diagnostics"))
         visibility = diagnostics.get("analysis_visibility") if isinstance(diagnostics.get("analysis_visibility"), dict) else None
         if visibility is None:
-            visibility = self._build_analysis_visibility(runtime_rule, result)
+            visibility = self._build_analysis_visibility(primary.runtime_rule, primary.result)
         excerpt = format_public_phase_pack_excerpt(
             visibility.get("market_phase_summary"),
             visibility.get("analysis_context_pack_overview"),
             source=visibility.get("source"),
+            report_language=report_language,
         )
         if excerpt:
             content = f"{content}\n\n{excerpt}"
-        signal_excerpt = format_decision_signal_excerpt(diagnostics.get("decision_signal_summary"))
+        signal_excerpt = format_decision_signal_excerpt(
+            diagnostics.get("decision_signal_summary"),
+            report_language=report_language,
+        )
         if signal_excerpt:
             content = f"{content}\n\n{signal_excerpt}"
-        alert_text = NotificationBuilder.build_simple_alert(title=title, content=content, alert_type="warning")
+        return NotificationBuilder.build_simple_alert(title=title, content=content, alert_type="warning")
 
-        return notification_service.send_with_results(alert_text, route_type="alert")
+    def _format_trigger_line(
+        self,
+        item: PendingAlertNotification,
+        *,
+        labels: Dict[str, str],
+    ) -> str:
+        reason = str(
+            item.result.get("reason")
+            or item.result.get("message")
+            or getattr(item.runtime_rule.rule, "description", None)
+            or labels["alert_triggered_fallback"]
+        ).strip()
+        rule_name = self._rule_display_name(item.runtime_rule)
+        if not rule_name:
+            return reason
+        return labels["reason_with_rule"].format(reason=reason, rule=rule_name)
 
-    def _send_notification_safely(self, runtime_rule: RuntimeAlertRule, result: Dict[str, Any]) -> "NotificationDispatchResult":
+    def _send_notifications_safely(
+        self,
+        items: List[PendingAlertNotification],
+        *,
+        report_language: str,
+    ) -> "NotificationDispatchResult":
         try:
-            return self._send_notification(runtime_rule, result)
+            return self._send_notifications(items, report_language=report_language)
         except Exception as exc:
             from src.notification import ChannelAttemptResult, NotificationDispatchResult
 
+            primary = items[0] if items else None
+            target = self._display_target(primary.runtime_rule) if primary else "?"
             sanitized = self.service._sanitize_text(str(exc) or "notification failed")
             logger.warning(
                 "[AlertWorker] Failed to send alert notification for %s: %s",
-                self._display_target(runtime_rule),
+                target,
                 sanitized,
             )
             return NotificationDispatchResult(

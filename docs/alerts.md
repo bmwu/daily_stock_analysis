@@ -8,7 +8,7 @@
 
 - 配置入口：`AGENT_EVENT_MONITOR_ENABLED`、`AGENT_EVENT_MONITOR_INTERVAL_MINUTES`、`AGENT_EVENT_ALERT_RULES_JSON`。
 - 运行入口：`main.py` 在 schedule 模式中注册 `agent_event_monitor` 后台任务；后台 worker 每轮读取持久化 active rules，并继续兼容 legacy `AGENT_EVENT_ALERT_RULES_JSON`。
-- 通知投递：触发后复用 `NotificationService.send(..., route_type="alert")`，继续遵守通知网关的 alert 路由配置；推送标题与正文会带上规则名称（DB 规则用 `name`，legacy 规则回退到 `description`），不再只显示技术指标描述。
+- 通知投递：触发后复用 `NotificationService.send(..., route_type="alert")`，继续遵守通知网关的 alert 路由配置；推送正文按 `技术描述（规则: 名称）` 展示规则名（DB 规则用 `name`，legacy 规则回退到 `description`），并按 `REPORT_LANGUAGE` 本地化（zh/en/ko）。同一轮评估中，若多条规则挂到同一条 active `DecisionSignal`，会合并为一条通知并列出全部触发规则，避免重复 AI 决策信号块。
 - Web/System 配置校验：`src/services/system_config_service.py` 会对 `AGENT_EVENT_ALERT_RULES_JSON` 做 JSON 与规则语义校验。
 
 当前 runtime 支持三类规则：
@@ -343,7 +343,7 @@ P6 不做：
 - `analysis_context_pack_overview` 只来自 evaluator 已带 overview 或最近 30 天内的历史 snapshot。最近历史查询复用历史服务的代码变体候选，并以 best-effort + 批内短缓存方式执行；缺失或解析失败返回 `null`，不伪造 pack。
 - 告警通知只输出公开摘要：阶段标签、trigger source、partial-bar warning、数据质量等级和前两条 limitations。通知不得输出 raw context pack、Prompt、新闻正文、完整 diagnostics JSON、webhook URL、token 或持仓敏感细节。
 - Web 告警历史展示 phase badge、数据质量等级和 limitations 空态；旧触发记录缺少公开摘要时不影响列表读取。
-- #1390 P6 进一步复用 `DecisionSignal`：股票级真实触发会优先关联同标的 latest active 信号，并把低敏 `decision_signal_summary` 写入 diagnostics；无 active 信号时只创建最小 `source_type=alert/action=alert` 信号。`trace_id=alert-rule-<hash>` 只用于同源重试的 best-effort 幂等去重，不覆盖 active 信号；新建告警信号不写 `market_phase`，避免同一规则跨阶段重复创建。`market`、`portfolio_account`、overflow 或无法解析为具体股票的触发不会创建个股信号。
+- #1390 P6 进一步复用 `DecisionSignal`：股票级真实触发会优先关联同标的 latest active 信号，并把低敏 `decision_signal_summary` 写入 diagnostics；无 active 信号时只创建最小 `source_type=alert/action=alert` 信号。`trace_id=alert-rule-<hash>` 只用于同源重试的 best-effort 幂等去重，不覆盖 active 信号；新建告警信号不写 `market_phase`，避免同一规则跨阶段重复创建。`market`、`portfolio_account`、overflow 或无法解析为具体股票的触发不会创建个股信号。同一轮 worker 周期内，若多条可通知规则挂到同一条 decision signal（相同 `id`），通知会合并发送，并在正文列出全部触发规则。
 
 DecisionSignal 字段、脱敏、迁移与回滚边界见 [DecisionSignal 决策信号专题](decision-signals.md)。
 

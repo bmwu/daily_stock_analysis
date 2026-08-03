@@ -31,6 +31,10 @@ import type {
   AlertTriggerItem,
   AlertType,
 } from '../types/alerts';
+import { useUiLanguage } from '../contexts/UiLanguageContext';
+import { ALERT_PAGE_TEXT } from '../locales/featureText';
+import { formatUiText } from '../i18n/uiText';
+import type { UiLanguage } from '../i18n/uiText';
 import { formatDateTime } from '../utils/format';
 import { cn } from '../utils/cn';
 
@@ -38,6 +42,7 @@ const RULES_PAGE_SIZE = 10;
 const HISTORY_PAGE_SIZE = 20;
 
 type AlertsMainTab = 'rules' | 'triggers' | 'notifications';
+type AlertPageText = (typeof ALERT_PAGE_TEXT)[UiLanguage];
 
 function enabledFilterToQuery(value: AlertRuleEnabledFilter): boolean | undefined {
   if (value === 'enabled') return true;
@@ -54,22 +59,27 @@ function testVariant(result: AlertRuleTestResponse): 'success' | 'warning' | 'da
   return result.triggered ? 'success' : 'warning';
 }
 
-function renderTestResultMessage(result: AlertRuleTestResponse): React.ReactNode {
+function renderTestResultMessage(result: AlertRuleTestResponse, text: AlertPageText): React.ReactNode {
   const targetResults = result.targetResults ?? [];
   return (
     <div className="space-y-2">
       <div>
         {result.message}
-        {' · 状态：'}
+        {` · ${text.statusPrefix} `}
         {result.status}
-        {' · 触发：'}
-        {result.triggered ? '是' : '否'}
-        {' · 观察值：'}
+        {` · ${text.triggeredPrefix} `}
+        {result.triggered ? text.yes : text.no}
+        {` · ${text.observedPrefix} `}
         {result.observedValue == null ? '--' : String(result.observedValue)}
       </div>
       {result.evaluatedCount != null && result.evaluatedCount > 1 ? (
         <div className="text-xs">
-          评估 {result.evaluatedCount} · 触发 {result.triggeredCount ?? 0} · 降级 {result.degradedCount ?? 0} · 跳过 {result.skippedCount ?? 0}
+          {formatUiText(text.evalSummary, {
+            evaluated: result.evaluatedCount,
+            triggered: result.triggeredCount ?? 0,
+            degraded: result.degradedCount ?? 0,
+            skipped: result.skippedCount ?? 0,
+          })}
         </div>
       ) : null}
       {targetResults.length > 1 ? (
@@ -89,29 +99,30 @@ function renderTestResultMessage(result: AlertRuleTestResponse): React.ReactNode
   );
 }
 
-const notificationChannelLabel: Record<string, string> = {
-  __cooldown__: '业务冷却',
-  __cooldown_read_failed__: '冷却读取失败',
-  __noise_suppressed__: '通知降噪',
-  __no_channel__: '无可用渠道',
-  __dispatch__: '通知调度',
-  __context__: '会话渠道',
-};
-
-function formatNotificationChannel(channel: string): string {
-  return notificationChannelLabel[channel] ?? channel;
+function formatNotificationChannel(channel: string, text: AlertPageText): string {
+  const labels: Record<string, string> = {
+    __cooldown__: text.channelCooldown,
+    __cooldown_read_failed__: text.channelCooldownReadFailed,
+    __noise_suppressed__: text.channelNoiseSuppressed,
+    __no_channel__: text.channelNoChannel,
+    __dispatch__: text.channelDispatch,
+    __context__: text.channelContext,
+  };
+  return labels[channel] ?? channel;
 }
 
-function formatNotificationStatus(notification: AlertNotificationItem): string {
-  if (notification.success) return '成功';
-  if (notification.errorCode === 'cooldown_active') return '冷却抑制';
-  if (notification.errorCode === 'cooldown_read_failed') return '冷却读取失败';
-  if (notification.errorCode === 'noise_suppressed') return '降噪抑制';
-  if (notification.errorCode === 'no_channel') return '无渠道';
-  return '失败';
+function formatNotificationStatus(notification: AlertNotificationItem, text: AlertPageText): string {
+  if (notification.success) return text.success;
+  if (notification.errorCode === 'cooldown_active') return text.cooldownActive;
+  if (notification.errorCode === 'cooldown_read_failed') return text.cooldownReadFailed;
+  if (notification.errorCode === 'noise_suppressed') return text.noiseSuppressed;
+  if (notification.errorCode === 'no_channel') return text.noChannel;
+  return text.failure;
 }
 
 const AlertsPage: React.FC = () => {
+  const { language } = useUiLanguage();
+  const text = ALERT_PAGE_TEXT[language];
   const [mainTab, setMainTab] = useState<AlertsMainTab>('rules');
   const [createDrawerOpen, setCreateDrawerOpen] = useState(false);
 
@@ -285,7 +296,7 @@ const AlertsPage: React.FC = () => {
     setCreateSuccess(null);
     try {
       const created = await alertsApi.createRule(payload);
-      setCreateSuccess(`已创建告警规则「${created.name}」`);
+      setCreateSuccess(formatUiText(text.createSuccessMessage, { name: created.name }));
       setCreateDrawerOpen(false);
       await loadRuleTargets();
       await loadRules(1);
@@ -344,8 +355,8 @@ const AlertsPage: React.FC = () => {
     <AppPage className="max-w-none space-y-5">
       <PageHeader
         eyebrow="Alert Center"
-        title="告警中心"
-        description="管理事件告警、日线技术指标、自选股、持仓/账户联动和大盘红绿灯规则，执行一次性测试，并查看后台评估任务记录的触发历史。"
+        title={text.title}
+        description={text.description}
         actions={(
           <button
             type="button"
@@ -356,7 +367,7 @@ const AlertsPage: React.FC = () => {
             }}
           >
             <Plus className="h-4 w-4" />
-            创建规则
+            {text.createRule}
           </button>
         )}
       />
@@ -366,12 +377,12 @@ const AlertsPage: React.FC = () => {
       ) : null}
       {createSuccess ? (
         <InlineAlert
-          title="创建成功"
+          title={text.createSuccessTitle}
           message={createSuccess}
           variant="success"
           action={(
             <button type="button" className="text-sm underline" onClick={() => setCreateSuccess(null)}>
-              关闭
+              {text.close}
             </button>
           )}
         />
@@ -379,7 +390,7 @@ const AlertsPage: React.FC = () => {
       {rulesError ? <ApiErrorAlert error={rulesError} onDismiss={() => setRulesError(null)} /> : null}
 
       <div className="space-y-4">
-        <div className="inline-flex rounded-xl border border-border/70 bg-elevated/30 p-1" role="tablist" aria-label="告警中心主视图">
+        <div className="inline-flex rounded-xl border border-border/70 bg-elevated/30 p-1" role="tablist" aria-label={text.mainTablistAria}>
           <button
             type="button"
             role="tab"
@@ -392,7 +403,7 @@ const AlertsPage: React.FC = () => {
             )}
             onClick={() => setMainTab('rules')}
           >
-            告警规则
+            {text.tabRules}
           </button>
           <button
             type="button"
@@ -406,7 +417,7 @@ const AlertsPage: React.FC = () => {
             )}
             onClick={() => setMainTab('triggers')}
           >
-            触发历史
+            {text.tabTriggers}
           </button>
           <button
             type="button"
@@ -420,12 +431,12 @@ const AlertsPage: React.FC = () => {
             )}
             onClick={() => setMainTab('notifications')}
           >
-            通知尝试记录
+            {text.tabNotifications}
           </button>
         </div>
 
         {mainTab === 'rules' ? (
-          <div className="space-y-4" role="tabpanel" aria-label="告警规则">
+          <div className="space-y-4" role="tabpanel" aria-label={text.panelRulesAria}>
             <AlertRuleList
               className="flex h-full min-h-0 flex-col"
               rules={rules}
@@ -457,16 +468,16 @@ const AlertsPage: React.FC = () => {
             />
             {testResult ? (
               <InlineAlert
-                title="测试结果"
+                title={text.testResultTitle}
                 variant={testVariant(testResult)}
-                message={renderTestResultMessage(testResult)}
+                message={renderTestResultMessage(testResult, text)}
               />
             ) : null}
           </div>
         ) : null}
 
         {mainTab === 'triggers' ? (
-          <div className="space-y-4" role="tabpanel" aria-label="触发历史">
+          <div className="space-y-4" role="tabpanel" aria-label={text.panelTriggersAria}>
             {triggersError ? (
               <ApiErrorAlert error={triggersError} onDismiss={() => setTriggersError(null)} />
             ) : null}
@@ -475,17 +486,17 @@ const AlertsPage: React.FC = () => {
         ) : null}
 
         {mainTab === 'notifications' ? (
-          <div className="space-y-4" role="tabpanel" aria-label="通知尝试记录">
+          <div className="space-y-4" role="tabpanel" aria-label={text.panelNotificationsAria}>
             {notificationsError ? (
               <ApiErrorAlert error={notificationsError} onDismiss={() => setNotificationsError(null)} />
             ) : null}
             <Card variant="bordered" padding="md">
-              {notificationsLoading ? <Loading label="正在加载通知尝试记录" /> : null}
+              {notificationsLoading ? <Loading label={text.loadingNotifications} /> : null}
               {!notificationsLoading && notifications.length === 0 ? (
                 <EmptyState
                   icon={<BellRing className="h-6 w-6" />}
-                  title="暂无通知尝试记录"
-                  description="当前没有可展示的通知尝试明细；告警触发仍会按已配置通知渠道发送。"
+                  title={text.emptyNotificationsTitle}
+                  description={text.emptyNotificationsDescription}
                 />
               ) : null}
               {!notificationsLoading && notifications.length > 0 ? (
@@ -493,19 +504,19 @@ const AlertsPage: React.FC = () => {
                   <table className="w-full min-w-[680px] text-left text-sm">
                     <thead className="border-b border-border/60 text-xs uppercase text-muted-text">
                       <tr>
-                        <th className="px-3 py-2 font-medium">渠道</th>
-                        <th className="px-3 py-2 font-medium">状态</th>
-                        <th className="px-3 py-2 font-medium">错误码</th>
-                        <th className="px-3 py-2 font-medium">耗时</th>
-                        <th className="px-3 py-2 font-medium">时间</th>
-                        <th className="px-3 py-2 font-medium">诊断</th>
+                        <th className="px-3 py-2 font-medium">{text.channel}</th>
+                        <th className="px-3 py-2 font-medium">{text.status}</th>
+                        <th className="px-3 py-2 font-medium">{text.errorCode}</th>
+                        <th className="px-3 py-2 font-medium">{text.latency}</th>
+                        <th className="px-3 py-2 font-medium">{text.time}</th>
+                        <th className="px-3 py-2 font-medium">{text.diagnostics}</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border/40">
                       {notifications.map((notification) => (
                         <tr key={notification.id}>
-                          <td className="px-3 py-3">{formatNotificationChannel(notification.channel)}</td>
-                          <td className="px-3 py-3">{formatNotificationStatus(notification)}</td>
+                          <td className="px-3 py-3">{formatNotificationChannel(notification.channel, text)}</td>
+                          <td className="px-3 py-3">{formatNotificationStatus(notification, text)}</td>
                           <td className="px-3 py-3">{notification.errorCode ?? '--'}</td>
                           <td className="px-3 py-3">
                             {notification.latencyMs == null ? '--' : `${notification.latencyMs}ms`}
@@ -526,7 +537,7 @@ const AlertsPage: React.FC = () => {
       <Drawer
         isOpen={createDrawerOpen}
         onClose={() => setCreateDrawerOpen(false)}
-        title="创建规则"
+        title={text.createRule}
         resizable
         initialWidthRatio={0.5}
       >
@@ -540,5 +551,6 @@ const AlertsPage: React.FC = () => {
     </AppPage>
   );
 };
+
 
 export default AlertsPage;
