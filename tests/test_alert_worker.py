@@ -561,8 +561,8 @@ class AlertWorkerTestCase(unittest.TestCase):
         notifier.send_with_results.assert_called_once()
         self.assertEqual(notifier.send_with_results.call_args.kwargs["route_type"], "alert")
         alert_text = notifier.send_with_results.call_args.args[0]
-        self.assertIn("Event Alert | Moutai breakout | 600519", alert_text)
-        self.assertIn("规则：Moutai breakout", alert_text)
+        self.assertIn("事件告警 | Moutai breakout | 600519", alert_text)
+        self.assertRegex(alert_text, r".+（规则: Moutai breakout）")
         notifications = self._notifications(trigger_id=triggers[0]["id"])
         self.assertEqual(len(notifications), 1)
         self.assertEqual(notifications[0]["channel"], "custom")
@@ -603,9 +603,98 @@ class AlertWorkerTestCase(unittest.TestCase):
         self.assertEqual(stats["triggered"], 1)
         notifier.send_with_results.assert_called_once()
         alert_text = notifier.send_with_results.call_args.args[0]
-        self.assertIn("Event Alert | AAPL MACD 死叉 | AAPL", alert_text)
-        self.assertIn("规则：AAPL MACD 死叉", alert_text)
-        self.assertIn("AAPL MACD DIF/DEA bearish_cross: delta = -1.3667", alert_text)
+        self.assertIn("事件告警 | AAPL MACD 死叉 | AAPL", alert_text)
+        self.assertIn(
+            "AAPL MACD DIF/DEA bearish_cross: delta = -1.3667（规则: AAPL MACD 死叉）",
+            alert_text,
+        )
+
+    def test_same_decision_signal_merges_multiple_rule_notifications(self) -> None:
+        self._create_rule(name="MACD cross", target="AAPL", alert_type="macd_cross", parameters={
+            "direction": "bearish_cross",
+            "fast_period": 12,
+            "slow_period": 26,
+            "signal_period": 9,
+        })
+        self._create_rule(name="MA30 cross", target="AAPL", alert_type="ma_price_cross", parameters={
+            "window": 30,
+            "direction": "below",
+        })
+        signal_service = DecisionSignalService()
+        created = signal_service.create_signal({
+            "stock_code": "AAPL",
+            "stock_name": "Apple",
+            "market": "us",
+            "source_type": "analysis",
+            "source_report_id": 42,
+            "trace_id": "analysis-42",
+            "trigger_source": "api",
+            "action": "sell",
+            "reason": "Shared active signal",
+            "watch_conditions": "Watch reclaim",
+            "risk_summary": "Downside risk",
+        })
+        signal_id = created["item"]["id"]
+        notifier = self._notifier()
+        worker = AlertWorker(
+            config_provider=lambda: self._config(),
+            service=self.service,
+            decision_signal_service=signal_service,
+            notifier=notifier,
+        )
+
+        async def _fake_evaluate(rule, _monitor, daily_cache=None):
+            alert_type = str(getattr(rule, "alert_type", "") or "")
+            message = (
+                "AAPL MACD DIF/DEA bearish_cross"
+                if alert_type == "macd_cross"
+                else "AAPL close crossed below MA30"
+            )
+            return {
+                "rule_id": self.service._runtime_rule_id(rule),
+                "status": "triggered",
+                "record_status": "triggered",
+                "triggered": True,
+                "reason": message,
+                "message": message,
+                "observed_value": 1.0,
+                "threshold": 0.0,
+                "data_source": "daily_data",
+                "data_timestamp": datetime(2026, 8, 3, 15, 0, 0),
+            }
+
+        with patch.object(self.service, "_evaluate_rule", new=_fake_evaluate):
+            stats = worker.run_once()
+
+        self.assertEqual(stats["triggered"], 2)
+        self.assertEqual(stats["notified"], 2)
+        notifier.send_with_results.assert_called_once()
+        alert_text = notifier.send_with_results.call_args.args[0]
+        self.assertIn("事件告警 | AAPL | 2 条规则", alert_text)
+        self.assertIn("触发规则:", alert_text)
+        self.assertIn("AAPL MACD DIF/DEA bearish_cross（规则: MACD cross）", alert_text)
+        self.assertIn("AAPL close crossed below MA30（规则: MA30 cross）", alert_text)
+        self.assertIn("Shared active signal", alert_text)
+        self.assertEqual(alert_text.count("AI 决策信号"), 1)
+        self.assertEqual(signal_id, created["item"]["id"])
+
+    def test_alert_notification_uses_report_language(self) -> None:
+        self._create_rule(name="Moutai breakout", target="600519")
+        notifier = self._notifier()
+        config = self._config()
+        config.report_language = "en"
+        worker = AlertWorker(config_provider=lambda: config, service=self.service, notifier=notifier)
+
+        with patch(
+            "src.agent.events.EventMonitor._get_realtime_quote",
+            new=AsyncMock(return_value=SimpleNamespace(price=1810.0)),
+        ):
+            worker.run_once()
+
+        alert_text = notifier.send_with_results.call_args.args[0]
+        self.assertIn("Event Alert | Moutai breakout | 600519", alert_text)
+        self.assertRegex(alert_text, r".+ \(Rule: Moutai breakout\)")
+        self.assertNotIn("（规则:", alert_text)
 
     def test_create_trigger_if_absent_rejects_non_dedupable_history(self) -> None:
         cases = [
