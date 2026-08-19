@@ -11,7 +11,7 @@ import {
   type AlertRuleEnabledFilter,
   type AlertTypeFilter,
 } from '../components/alerts/AlertRuleList';
-import { AlertTriggerHistory } from '../components/alerts/AlertTriggerHistory';
+import { AlertTriggerHistory, type TriggerSortBy, type TriggerSortOrder, type TriggerStatusFilter } from '../components/alerts/AlertTriggerHistory';
 import {
   ApiErrorAlert,
   AppPage,
@@ -138,8 +138,16 @@ const AlertsPage: React.FC = () => {
   const [rulesLoaded, setRulesLoaded] = useState(false);
 
   const [triggers, setTriggers] = useState<AlertTriggerItem[]>([]);
+  const [triggersTotal, setTriggersTotal] = useState(0);
+  const [triggersPage, setTriggersPage] = useState(1);
   const [triggersLoading, setTriggersLoading] = useState(false);
   const [triggersError, setTriggersError] = useState<ParsedApiError | null>(null);
+  const [triggerStatusFilter, setTriggerStatusFilter] = useState<TriggerStatusFilter>('all');
+  const [triggerRuleFilter, setTriggerRuleFilter] = useState('');
+  const [triggerTargetFilter, setTriggerTargetFilter] = useState('');
+  const [triggerSortBy, setTriggerSortBy] = useState<TriggerSortBy>('triggered_at');
+  const [triggerSortOrder, setTriggerSortOrder] = useState<TriggerSortOrder>('desc');
+  const [triggerRuleOptions, setTriggerRuleOptions] = useState<Array<{ id: number; name: string }>>([]);
 
   const [notifications, setNotifications] = useState<AlertNotificationItem[]>([]);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
@@ -151,6 +159,42 @@ const AlertsPage: React.FC = () => {
   const [busyRule, setBusyRule] = useState<AlertRuleBusyState | null>(null);
   const [testResult, setTestResult] = useState<AlertRuleTestResponse | null>(null);
   const rulesRequestIdRef = useRef(0);
+  const ruleMetaCacheRef = useRef<Map<number, { name: string; alertType?: string }>>(new Map());
+
+  const rememberRuleMeta = useCallback((ruleId: number, name: string, alertType?: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    ruleMetaCacheRef.current.set(ruleId, { name: trimmed, alertType });
+  }, []);
+
+  const enrichTriggersWithRuleMeta = useCallback(async (items: AlertTriggerItem[]) => {
+    const missingIds = Array.from(new Set(
+      items
+        .filter((item) => item.ruleId != null && !String(item.ruleName || '').trim())
+        .map((item) => Number(item.ruleId))
+        .filter((ruleId) => Number.isFinite(ruleId) && ruleId > 0 && !ruleMetaCacheRef.current.has(ruleId)),
+    ));
+
+    await Promise.all(missingIds.map(async (ruleId) => {
+      try {
+        const rule = await alertsApi.getRule(ruleId);
+        rememberRuleMeta(rule.id, rule.name, rule.alertType);
+      } catch {
+        // Rule may have been deleted; keep fallback label in the table.
+      }
+    }));
+
+    return items.map((item) => {
+      if (item.ruleId == null) return item;
+      const cached = ruleMetaCacheRef.current.get(Number(item.ruleId));
+      if (!cached) return item;
+      return {
+        ...item,
+        ruleName: String(item.ruleName || '').trim() || cached.name,
+        alertType: item.alertType || cached.alertType || item.alertType,
+      };
+    });
+  }, [rememberRuleMeta]);
 
   const loadRules = useCallback(async (pageOverride?: number) => {
     const requestId = rulesRequestIdRef.current + 1;
@@ -179,6 +223,9 @@ const AlertsPage: React.FC = () => {
       setRulesTotal(response.total);
       setRulesError(null);
       setRulesLoaded(true);
+      for (const rule of response.items) {
+        rememberRuleMeta(rule.id, rule.name, rule.alertType);
+      }
       return response;
     } catch (error) {
       if (!isLatestRequest()) return null;
@@ -189,7 +236,7 @@ const AlertsPage: React.FC = () => {
         setRulesLoading(false);
       }
     }
-  }, [alertTypeFilter, enabledFilter, rulesPage, targetFilter]);
+  }, [alertTypeFilter, enabledFilter, rememberRuleMeta, rulesPage, targetFilter]);
 
   const loadRuleTargets = useCallback(async () => {
     const applyTargets = (items: AlertRuleTargetOption[]) => {
@@ -232,18 +279,59 @@ const AlertsPage: React.FC = () => {
     }
   }, []);
 
-  const loadTriggers = useCallback(async () => {
+  const buildTriggerQuery = useCallback((page: number) => {
+    const ruleId = triggerRuleFilter.trim() ? Number(triggerRuleFilter) : undefined;
+    return {
+      page,
+      pageSize: HISTORY_PAGE_SIZE,
+      status: triggerStatusFilter === 'all' ? undefined : triggerStatusFilter,
+      ruleId: Number.isFinite(ruleId) && ruleId! > 0 ? ruleId : undefined,
+      target: triggerTargetFilter.trim() || undefined,
+      sortBy: triggerSortBy,
+      sortOrder: triggerSortOrder,
+    };
+  }, [triggerRuleFilter, triggerSortBy, triggerSortOrder, triggerStatusFilter, triggerTargetFilter]);
+
+  const loadTriggers = useCallback(async (pageOverride?: number) => {
+    const requestedPage = pageOverride ?? triggersPage;
     setTriggersLoading(true);
     try {
-      const response = await alertsApi.listTriggers({ page: 1, pageSize: HISTORY_PAGE_SIZE });
-      setTriggers(response.items);
+      let response = await alertsApi.listTriggers(buildTriggerQuery(requestedPage));
+      const lastPage = Math.max(1, Math.ceil(response.total / HISTORY_PAGE_SIZE));
+      if (response.items.length === 0 && response.total > 0 && requestedPage > lastPage) {
+        setTriggersPage(lastPage);
+        response = await alertsApi.listTriggers(buildTriggerQuery(lastPage));
+      } else if (pageOverride !== undefined && pageOverride !== triggersPage) {
+        setTriggersPage(pageOverride);
+      }
+      const enrichedItems = await enrichTriggersWithRuleMeta(response.items);
+      setTriggers(enrichedItems);
+      setTriggersTotal(response.total);
       setTriggersError(null);
     } catch (error) {
       setTriggersError(getParsedApiError(error));
     } finally {
       setTriggersLoading(false);
     }
-  }, []);
+  }, [buildTriggerQuery, enrichTriggersWithRuleMeta, triggersPage]);
+
+  const loadTriggerFilterOptions = useCallback(async () => {
+    try {
+      const response = await alertsApi.listRules({ page: 1, pageSize: 100 });
+      const options = (response.items ?? [])
+        .map((rule) => ({
+          id: rule.id,
+          name: String(rule.name || '').trim() || `#${rule.id}`,
+        }))
+        .sort((left, right) => left.name.localeCompare(right.name, 'en'));
+      setTriggerRuleOptions(options);
+      for (const rule of response.items ?? []) {
+        rememberRuleMeta(rule.id, rule.name, rule.alertType);
+      }
+    } catch {
+      // Keep whatever options we already have.
+    }
+  }, [rememberRuleMeta]);
 
   const loadNotifications = useCallback(async () => {
     setNotificationsLoading(true);
@@ -267,6 +355,10 @@ const AlertsPage: React.FC = () => {
   }, [loadRuleTargets]);
 
   useEffect(() => {
+    void loadTriggerFilterOptions();
+  }, [loadTriggerFilterOptions]);
+
+  useEffect(() => {
     if (rules.length === 0) return;
     setTargetOptions((prev) => {
       const unique = new Map(prev.map((item) => [item.target, item]));
@@ -287,8 +379,12 @@ const AlertsPage: React.FC = () => {
   useEffect(() => {
     if (!rulesLoaded) return;
     void loadTriggers();
+  }, [loadTriggers, rulesLoaded]);
+
+  useEffect(() => {
+    if (!rulesLoaded) return;
     void loadNotifications();
-  }, [loadNotifications, loadTriggers, rulesLoaded]);
+  }, [loadNotifications, rulesLoaded]);
 
   const handleCreateRule = async (payload: AlertRuleCreateRequest) => {
     setCreateLoading(true);
@@ -481,7 +577,42 @@ const AlertsPage: React.FC = () => {
             {triggersError ? (
               <ApiErrorAlert error={triggersError} onDismiss={() => setTriggersError(null)} />
             ) : null}
-            <AlertTriggerHistory triggers={triggers} isLoading={triggersLoading} />
+            <AlertTriggerHistory
+              triggers={triggers}
+              isLoading={triggersLoading}
+              page={triggersPage}
+              pageSize={HISTORY_PAGE_SIZE}
+              total={triggersTotal}
+              statusFilter={triggerStatusFilter}
+              ruleFilter={triggerRuleFilter}
+              targetFilter={triggerTargetFilter}
+              sortBy={triggerSortBy}
+              sortOrder={triggerSortOrder}
+              ruleOptions={triggerRuleOptions}
+              targetOptions={targetOptions.map((item) => item.target)}
+              onStatusFilterChange={(value) => {
+                setTriggerStatusFilter(value);
+                setTriggersPage(1);
+              }}
+              onRuleFilterChange={(value) => {
+                setTriggerRuleFilter(value);
+                setTriggersPage(1);
+              }}
+              onTargetFilterChange={(value) => {
+                setTriggerTargetFilter(value);
+                setTriggersPage(1);
+              }}
+              onSortChange={(nextSortBy) => {
+                if (triggerSortBy === nextSortBy) {
+                  setTriggerSortOrder((current) => (current === 'asc' ? 'desc' : 'asc'));
+                } else {
+                  setTriggerSortBy(nextSortBy);
+                  setTriggerSortOrder(nextSortBy === 'triggered_at' ? 'desc' : 'asc');
+                }
+                setTriggersPage(1);
+              }}
+              onPageChange={setTriggersPage}
+            />
           </div>
         ) : null}
 

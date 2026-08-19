@@ -867,11 +867,22 @@ class AlertApiTestCase(unittest.TestCase):
         self.assertEqual(trigger_resp.status_code, 200)
         trigger_payload = trigger_resp.json()
         self.assertEqual(trigger_payload["total"], 1)
+        self.assertEqual(trigger_payload["items"][0]["rule_id"], rule["id"])
+        self.assertEqual(trigger_payload["items"][0]["rule_name"], rule["name"])
+        self.assertEqual(trigger_payload["items"][0]["alert_type"], rule["alert_type"])
         self.assertNotIn("secret-token", str(trigger_payload))
         self.assertNotIn("example.com/hook", str(trigger_payload))
         self.assertIsNone(trigger_payload["items"][0]["market_phase_summary"])
         self.assertIsNone(trigger_payload["items"][0]["analysis_context_pack_overview"])
         self.assertEqual(trigger_payload["items"][0]["analysis_visibility_source"], "legacy_text")
+
+        sorted_resp = self.client.get(
+            "/api/v1/alerts/triggers",
+            params={"page": 1, "page_size": 10, "sort_by": "status", "sort_order": "asc", "status": "triggered"},
+        )
+        self.assertEqual(sorted_resp.status_code, 200, sorted_resp.text)
+        self.assertEqual(sorted_resp.json()["total"], 1)
+        self.assertEqual(sorted_resp.json()["items"][0]["status"], "triggered")
 
         notification_resp = self.client.get("/api/v1/alerts/notifications", params={"channel": "wechat"})
         self.assertEqual(notification_resp.status_code, 200)

@@ -111,6 +111,8 @@ export interface AlertRuleTargetResult {
 export interface AlertTriggerItem {
   id: number;
   ruleId?: number | null;
+  ruleName?: string | null;
+  alertType?: AlertType | string | null;
   target: string;
   observedValue?: number | null;
   threshold?: number | null;
@@ -176,6 +178,8 @@ export interface AlertTriggerListQuery {
   ruleId?: number;
   target?: string;
   status?: string;
+  sortBy?: 'triggered_at' | 'status' | 'target' | 'rule_name';
+  sortOrder?: 'asc' | 'desc';
   page?: number;
   pageSize?: number;
 }

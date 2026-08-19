@@ -108,6 +108,8 @@ class AlertRuleTestResponse(BaseModel):
 class AlertTriggerItem(BaseModel):
     id: int
     rule_id: Optional[int] = None
+    rule_name: Optional[str] = None
+    alert_type: Optional[str] = None
     target: str
     observed_value: Optional[float] = None
     threshold: Optional[float] = None

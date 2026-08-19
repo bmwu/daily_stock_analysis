@@ -67,6 +67,8 @@ function toTriggerListParams(query: AlertTriggerListQuery = {}): Record<string, 
   if (query.ruleId !== undefined) params.rule_id = query.ruleId;
   if (query.target) params.target = query.target;
   if (query.status) params.status = query.status;
+  if (query.sortBy) params.sort_by = query.sortBy;
+  if (query.sortOrder) params.sort_order = query.sortOrder;
   if (query.page !== undefined) params.page = query.page;
   if (query.pageSize !== undefined) params.page_size = query.pageSize;
   return params;
@@ -100,6 +102,11 @@ export const alertsApi = {
       '/api/v1/alerts/rules',
       toSnakeRulePayload(payload),
     );
+    return toCamelCase<AlertRuleItem>(response.data);
+  },
+
+  async getRule(ruleId: number): Promise<AlertRuleItem> {
+    const response = await apiClient.get<Record<string, unknown>>(`/api/v1/alerts/rules/${ruleId}`);
     return toCamelCase<AlertRuleItem>(response.data);
   },
 

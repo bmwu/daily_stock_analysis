@@ -231,6 +231,11 @@ def list_triggers(
     rule_id: Optional[int] = Query(None, description="Optional rule id filter"),
     target: Optional[str] = Query(None, description="Optional target filter"),
     status: Optional[str] = Query(None, description="Optional status filter"),
+    sort_by: str = Query(
+        "triggered_at",
+        description="Sort field: triggered_at | status | target | rule_name",
+    ),
+    sort_order: str = Query("desc", description="Sort order: asc | desc"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
 ) -> AlertTriggerListResponse:
@@ -241,6 +246,8 @@ def list_triggers(
                 rule_id=rule_id,
                 target=target,
                 status=status,
+                sort_by=sort_by,
+                sort_order=sort_order,
                 page=page,
                 page_size=page_size,
             )

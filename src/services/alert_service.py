@@ -221,7 +221,7 @@ class AlertService:
         if isinstance(rule, PriceChangeAlert):
             return await self._evaluate_price_change(rule, monitor)
         if isinstance(rule, VolumeAlert):
-            return await self._evaluate_volume(rule)
+            return await self._evaluate_volume(rule, daily_cache=daily_cache)
         if isinstance(rule, TechnicalIndicatorAlert):
             return await self._evaluate_technical_indicator(rule, daily_cache=daily_cache)
         if isinstance(rule, PortfolioRiskAlert):
@@ -441,14 +441,26 @@ class AlertService:
             data_timestamp=self._extract_quote_datetime(quote),
         )
 
-    async def _evaluate_volume(self, rule: VolumeAlert) -> Dict[str, Any]:
+    async def _evaluate_volume(
+        self,
+        rule: VolumeAlert,
+        *,
+        daily_cache: Optional[Dict[Any, Any]] = None,
+    ) -> Dict[str, Any]:
+        requested_days = 20
+        cache_key = (rule.stock_code, requested_days)
+
         def _fetch_daily_data():
             from data_provider import DataFetcherManager
 
-            return DataFetcherManager().get_daily_data(rule.stock_code, days=20)
+            return DataFetcherManager().get_daily_data(rule.stock_code, days=requested_days)
 
         try:
-            result = await asyncio.to_thread(_fetch_daily_data)
+            result = await self._get_cached_daily_data(
+                cache_key,
+                _fetch_daily_data,
+                daily_cache=daily_cache,
+            )
         except Exception as exc:
             return self._evaluation_error(rule, exc, data_source="daily_data")
         if result is None:
@@ -528,11 +540,36 @@ class AlertService:
             data_timestamp=data_timestamp,
         )
 
+    async def _get_cached_daily_data(
+        self,
+        cache_key: tuple[Any, ...],
+        fetch_daily_data,
+        *,
+        daily_cache: Optional[Dict[Any, Any]] = None,
+    ) -> Any:
+        """Reuse per-round daily bars; also cache fetch failures to avoid repeat API calls."""
+        if daily_cache is not None and cache_key in daily_cache:
+            cached = daily_cache[cache_key]
+            if isinstance(cached, BaseException):
+                raise cached
+            return cached
+
+        try:
+            result = await asyncio.to_thread(fetch_daily_data)
+        except Exception as exc:
+            if daily_cache is not None:
+                daily_cache.setdefault(cache_key, exc)
+            raise
+
+        if daily_cache is not None:
+            daily_cache[cache_key] = result
+        return result
+
     async def _evaluate_technical_indicator(
         self,
         rule: TechnicalIndicatorAlert,
         *,
-        daily_cache: Optional[Dict[tuple[str, int], Any]] = None,
+        daily_cache: Optional[Dict[Any, Any]] = None,
     ) -> Dict[str, Any]:
         requested_days = compute_requested_days(rule.alert_type, rule.indicator_params)
         cache_key = (rule.stock_code, requested_days)
@@ -543,12 +580,11 @@ class AlertService:
             return DataFetcherManager().get_daily_data(rule.stock_code, days=requested_days)
 
         try:
-            if daily_cache is not None and cache_key in daily_cache:
-                result = daily_cache[cache_key]
-            else:
-                result = await asyncio.to_thread(_fetch_daily_data)
-                if daily_cache is not None:
-                    daily_cache[cache_key] = result
+            result = await self._get_cached_daily_data(
+                cache_key,
+                _fetch_daily_data,
+                daily_cache=daily_cache,
+            )
         except Exception as exc:
             return self._evaluation_error(rule, exc, data_source="daily_data")
 
@@ -834,6 +870,8 @@ class AlertService:
         rule_id: Optional[int] = None,
         target: Optional[str] = None,
         status: Optional[str] = None,
+        sort_by: str = "triggered_at",
+        sort_order: str = "desc",
         page: int = 1,
         page_size: int = 20,
     ) -> Dict[str, Any]:
@@ -841,15 +879,23 @@ class AlertService:
             rule_id=rule_id,
             target=target,
             status=status,
+            sort_by=sort_by,
+            sort_order=sort_order,
             page=page,
             page_size=page_size,
         )
+        rule_meta = self._rule_meta_for_triggers(rows)
         return {
-            "items": [self._serialize_trigger(row) for row in rows],
+            "items": [self._serialize_trigger(row, rule_meta=rule_meta) for row in rows],
             "total": total,
             "page": page,
             "page_size": page_size,
         }
+
+    def _rule_meta_for_triggers(self, rows: List[AlertTriggerRecord]) -> Dict[int, Dict[str, Optional[str]]]:
+        rule_ids = [int(row.rule_id) for row in rows if row.rule_id is not None]
+        return self.repo.get_rules_by_ids(rule_ids)
+
 
     def list_notifications(
         self,
@@ -1217,11 +1263,21 @@ class AlertService:
             "cooldown_active": cooldown_active,
         }
 
-    def _serialize_trigger(self, row: AlertTriggerRecord) -> Dict[str, Any]:
+    def _serialize_trigger(
+        self,
+        row: AlertTriggerRecord,
+        *,
+        rule_meta: Optional[Dict[int, Dict[str, Optional[str]]]] = None,
+    ) -> Dict[str, Any]:
         visibility = self._parse_analysis_visibility(row.diagnostics)
+        meta = {}
+        if row.rule_id is not None and rule_meta:
+            meta = rule_meta.get(int(row.rule_id)) or {}
         return {
             "id": row.id,
             "rule_id": row.rule_id,
+            "rule_name": meta.get("name"),
+            "alert_type": meta.get("alert_type"),
             "target": row.target,
             "observed_value": row.observed_value,
             "threshold": row.threshold,

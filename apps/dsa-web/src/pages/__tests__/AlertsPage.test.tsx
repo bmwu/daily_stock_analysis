@@ -7,6 +7,7 @@ const {
   listRules,
   listRuleTargets,
   createRule,
+  getRule,
   deleteRule,
   enableRule,
   disableRule,
@@ -17,6 +18,7 @@ const {
   listRules: vi.fn(),
   listRuleTargets: vi.fn(),
   createRule: vi.fn(),
+  getRule: vi.fn(),
   deleteRule: vi.fn(),
   enableRule: vi.fn(),
   disableRule: vi.fn(),
@@ -30,6 +32,7 @@ vi.mock('../../api/alerts', () => ({
     listRules,
     listRuleTargets,
     createRule,
+    getRule,
     deleteRule,
     enableRule,
     disableRule,
@@ -110,13 +113,20 @@ function createDeferred<T>() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  listRules.mockResolvedValue({ items: [rule], total: 1, page: 1, pageSize: 10 });
+  listRules.mockImplementation(async (query: { page?: number; pageSize?: number } = {}) => {
+    if (query.pageSize === 100) {
+      return { items: [rule], total: 1, page: 1, pageSize: 100 };
+    }
+    return { items: [rule], total: 1, page: query.page ?? 1, pageSize: query.pageSize ?? 10 };
+  });
   listRuleTargets.mockResolvedValue({ items: [{ target: '600519', targetScope: 'single_symbol' }] });
   listTriggers.mockResolvedValue({
     items: [
       {
         id: 10,
         ruleId: 1,
+        ruleName: '茅台价格突破',
+        alertType: 'price_cross',
         target: '600519',
         observedValue: 1801,
         threshold: 1800,
@@ -132,6 +142,7 @@ beforeEach(() => {
     pageSize: 20,
   });
   listNotifications.mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 20 });
+  getRule.mockImplementation(async (ruleId: number) => ({ ...rule, id: ruleId }));
   testRule.mockResolvedValue({
     ruleId: 1,
     status: 'triggered',
@@ -154,10 +165,13 @@ describe('AlertsPage', () => {
     );
 
     expect(screen.getByText('管理事件告警、日线技术指标、自选股、持仓/账户联动和大盘红绿灯规则，执行一次性测试，并查看后台评估任务记录的触发历史。')).toBeInTheDocument();
-    expect(await screen.findByText('茅台价格突破')).toBeInTheDocument();
+    expect(await screen.findAllByText('茅台价格突破')).not.toHaveLength(0);
     expect(screen.queryByText('暂无通知尝试记录')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('tab', { name: '触发历史' }));
     expect(await screen.findByText('600519 价格上破 1800')).toBeInTheDocument();
+    expect(screen.getAllByText('茅台价格突破').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('600519').length).toBeGreaterThan(0);
+    expect(screen.getByText('1 条记录')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('tab', { name: '通知尝试记录' }));
     expect(await screen.findByText('暂无通知尝试记录')).toBeInTheDocument();
     expect(listRules).toHaveBeenCalledWith({
@@ -167,8 +181,158 @@ describe('AlertsPage', () => {
       page: 1,
       pageSize: 10,
     });
-    expect(listTriggers).toHaveBeenCalledWith({ page: 1, pageSize: 20 });
+    expect(listTriggers).toHaveBeenCalledWith({
+      page: 1,
+      pageSize: 20,
+      status: undefined,
+      ruleId: undefined,
+      target: undefined,
+      sortBy: 'triggered_at',
+      sortOrder: 'desc',
+    });
     expect(listNotifications).toHaveBeenCalledWith({ page: 1, pageSize: 20 });
+  });
+
+  it('resolves missing trigger rule names via rule detail API', async () => {
+    listTriggers.mockResolvedValueOnce({
+      items: [
+        {
+          id: 18,
+          ruleId: 18,
+          target: 'AAPL',
+          observedValue: null,
+          threshold: null,
+          reason: 'Yahoo Finance unavailable',
+          dataSource: 'daily_data',
+          dataTimestamp: null,
+          triggeredAt: '2026-08-07T08:08:00',
+          status: 'failed',
+        },
+      ],
+      total: 1,
+      page: 1,
+      pageSize: 20,
+    });
+    getRule.mockResolvedValueOnce({
+      ...rule,
+      id: 18,
+      name: 'AAPL KDJ bearish_cross',
+      target: 'AAPL',
+      alertType: 'kdj_cross',
+    });
+
+    render(
+      <MemoryRouter>
+        <AlertsPage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole('tab', { name: '触发历史' }));
+    await waitFor(() => expect(getRule).toHaveBeenCalledWith(18));
+    expect(await screen.findByText('AAPL KDJ bearish_cross')).toBeInTheDocument();
+    expect(screen.queryByText('规则 #18')).not.toBeInTheDocument();
+  });
+
+  it('filters trigger history by status, rule, and target', async () => {
+    render(
+      <MemoryRouter>
+        <AlertsPage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole('tab', { name: '触发历史' }));
+    expect(await screen.findByText('600519 价格上破 1800')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '全部状态' }));
+    fireEvent.click(await screen.findByRole('option', { name: '失败' }));
+    await waitFor(() => expect(listTriggers).toHaveBeenLastCalledWith(expect.objectContaining({
+      status: 'failed',
+      page: 1,
+    })));
+
+    fireEvent.click(screen.getByRole('button', { name: '全部规则' }));
+    fireEvent.click(await screen.findByRole('option', { name: '茅台价格突破' }));
+    await waitFor(() => expect(listTriggers).toHaveBeenLastCalledWith(expect.objectContaining({
+      ruleId: 1,
+      page: 1,
+    })));
+
+    fireEvent.click(screen.getByRole('button', { name: '全部目标' }));
+    fireEvent.click(await screen.findByRole('option', { name: '600519' }));
+    await waitFor(() => expect(listTriggers).toHaveBeenLastCalledWith(expect.objectContaining({
+      target: '600519',
+      page: 1,
+    })));
+
+    fireEvent.click(screen.getByRole('button', { name: '按状态排序' }));
+    await waitFor(() => expect(listTriggers).toHaveBeenLastCalledWith(expect.objectContaining({
+      sortBy: 'status',
+      sortOrder: 'asc',
+    })));
+  });
+
+  it('paginates trigger history', async () => {
+    listTriggers
+      .mockResolvedValueOnce({
+        items: Array.from({ length: 20 }, (_, index) => ({
+          id: index + 1,
+          ruleId: 1,
+          ruleName: '茅台价格突破',
+          alertType: 'price_cross',
+          target: '600519',
+          observedValue: null,
+          threshold: 1800,
+          reason: `page1-${index}`,
+          dataSource: 'daily_data',
+          dataTimestamp: null,
+          triggeredAt: `2026-05-18T09:${String(index).padStart(2, '0')}:00`,
+          status: 'failed',
+        })),
+        total: 21,
+        page: 1,
+        pageSize: 20,
+      })
+      .mockResolvedValueOnce({
+        items: [
+          {
+            id: 21,
+            ruleId: 1,
+            ruleName: '茅台价格突破',
+            alertType: 'price_cross',
+            target: '600519',
+            observedValue: 1801,
+            threshold: 1800,
+            reason: '600519 price above 1800',
+            dataSource: 'realtime_quote',
+            dataTimestamp: '2026-05-17T09:30:00',
+            triggeredAt: '2026-05-17T09:30:01',
+            status: 'triggered',
+          },
+        ],
+        total: 21,
+        page: 2,
+        pageSize: 20,
+      });
+
+    render(
+      <MemoryRouter>
+        <AlertsPage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole('tab', { name: '触发历史' }));
+    expect(await screen.findByText('21 条记录')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '2' }));
+    await waitFor(() => expect(listTriggers).toHaveBeenLastCalledWith({
+      page: 2,
+      pageSize: 20,
+      status: undefined,
+      ruleId: undefined,
+      target: undefined,
+      sortBy: 'triggered_at',
+      sortOrder: 'desc',
+    }));
+    expect(await screen.findByText('600519 价格上破 1800')).toBeInTheDocument();
   });
 
   it('runs a dry-run test and renders only declared response fields', async () => {
@@ -184,7 +348,7 @@ describe('AlertsPage', () => {
     await waitFor(() => expect(testRule).toHaveBeenCalledWith(1));
     expect(await screen.findByText('测试结果')).toBeInTheDocument();
     expect(screen.getByText(/600519 price above 1800/)).toBeInTheDocument();
-    expect(screen.getByText(/观察值：1801/)).toBeInTheDocument();
+    expect(screen.getByText(/观察值：\s*1801/)).toBeInTheDocument();
     expect(screen.queryByText(/realtime_quote/)).not.toBeInTheDocument();
   });
 
@@ -282,11 +446,15 @@ describe('AlertsPage', () => {
 
   it('clamps rules pagination when a mutation leaves the current page empty', async () => {
     const page2Rule = { ...rule, id: 2, name: '第二页规则', target: 'AAPL' };
-    listRules
-      .mockResolvedValueOnce({ items: [rule], total: 11, page: 1, pageSize: 10 })
-      .mockResolvedValueOnce({ items: [page2Rule], total: 11, page: 2, pageSize: 10 })
-      .mockResolvedValueOnce({ items: [], total: 10, page: 2, pageSize: 10 })
-      .mockResolvedValue({ items: [rule], total: 10, page: 1, pageSize: 10 });
+    listRules.mockImplementation(async (query: { page?: number; pageSize?: number } = {}) => {
+      if (query.pageSize === 100) {
+        return { items: [rule, page2Rule], total: 2, page: 1, pageSize: 100 };
+      }
+      if (query.page === 2) {
+        return { items: [page2Rule], total: 11, page: 2, pageSize: 10 };
+      }
+      return { items: [rule], total: 11, page: 1, pageSize: 10 };
+    });
 
     render(
       <MemoryRouter>
@@ -294,9 +462,20 @@ describe('AlertsPage', () => {
       </MemoryRouter>,
     );
 
-    expect(await screen.findByText('茅台价格突破')).toBeInTheDocument();
+    expect(await screen.findAllByText('茅台价格突破')).not.toHaveLength(0);
     fireEvent.click(screen.getByRole('button', { name: '2' }));
     expect(await screen.findByText('第二页规则')).toBeInTheDocument();
+
+    listRules.mockImplementation(async (query: { page?: number; pageSize?: number } = {}) => {
+      if (query.pageSize === 100) {
+        return { items: [rule], total: 1, page: 1, pageSize: 100 };
+      }
+      if (query.page === 2) {
+        return { items: [], total: 10, page: 2, pageSize: 10 };
+      }
+      return { items: [rule], total: 10, page: 1, pageSize: 10 };
+    });
+
     fireEvent.click(screen.getByLabelText('删除 第二页规则'));
     fireEvent.click(await screen.findByRole('button', { name: '删除' }));
 
@@ -310,7 +489,7 @@ describe('AlertsPage', () => {
         pageSize: 10,
       });
     });
-    expect(await screen.findByText('茅台价格突破')).toBeInTheDocument();
+    expect(await screen.findAllByText('茅台价格突破')).not.toHaveLength(0);
   });
 
   it('keeps the latest rules response when filter requests resolve out of order', async () => {
@@ -318,10 +497,15 @@ describe('AlertsPage', () => {
     const filteredRequest = createDeferred<{ items: Array<typeof rule>; total: number; page: number; pageSize: number }>();
     const staleRule = { ...rule, id: 3, name: '旧筛选规则', enabled: true };
     const filteredRule = { ...rule, id: 4, name: '停用规则', enabled: false };
-    listRules
-      .mockReset()
-      .mockReturnValueOnce(initialRequest.promise)
-      .mockReturnValueOnce(filteredRequest.promise);
+    listRules.mockReset().mockImplementation(async (query: { enabled?: boolean; pageSize?: number } = {}) => {
+      if (query.pageSize === 100) {
+        return { items: [rule], total: 1, page: 1, pageSize: 100 };
+      }
+      if (query.enabled === false) {
+        return filteredRequest.promise;
+      }
+      return initialRequest.promise;
+    });
 
     render(
       <MemoryRouter>
@@ -329,8 +513,11 @@ describe('AlertsPage', () => {
       </MemoryRouter>,
     );
 
-    fireEvent.change(screen.getByLabelText('启停状态'), { target: { value: 'disabled' } });
-    await waitFor(() => expect(listRules).toHaveBeenCalledTimes(2));
+    fireEvent.change(await screen.findByLabelText('启停状态'), { target: { value: 'disabled' } });
+    await waitFor(() => expect(listRules).toHaveBeenCalledWith(expect.objectContaining({
+      enabled: false,
+      pageSize: 10,
+    })));
 
     filteredRequest.resolve({ items: [filteredRule], total: 1, page: 1, pageSize: 10 });
     expect(await screen.findByText('停用规则')).toBeInTheDocument();

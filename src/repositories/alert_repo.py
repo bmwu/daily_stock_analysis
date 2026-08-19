@@ -40,6 +40,25 @@ class AlertRepository:
                 select(AlertRuleRecord).where(AlertRuleRecord.id == rule_id).limit(1)
             ).scalar_one_or_none()
 
+    def get_rules_by_ids(self, rule_ids: List[int]) -> Dict[int, Dict[str, Optional[str]]]:
+        """Return rule name/type metadata keyed by id for trigger-history enrichment."""
+        unique_ids = sorted({int(rule_id) for rule_id in rule_ids if rule_id is not None})
+        if not unique_ids:
+            return {}
+        with self.db.get_session() as session:
+            rows = session.execute(
+                select(AlertRuleRecord).where(AlertRuleRecord.id.in_(unique_ids))
+            ).scalars().all()
+            # Copy scalars inside the session to avoid detached/expired ORM reads.
+            return {
+                int(row.id): {
+                    "name": str(getattr(row, "name", "") or "").strip() or None,
+                    "alert_type": str(getattr(row, "alert_type", "") or "").strip() or None,
+                }
+                for row in rows
+                if row.id is not None
+            }
+
     def update_rule(self, rule_id: int, fields: Dict[str, Any]) -> Optional[AlertRuleRecord]:
         with self.db.get_session() as session:
             row = session.execute(
@@ -283,6 +302,8 @@ class AlertRepository:
         rule_id: Optional[int] = None,
         target: Optional[str] = None,
         status: Optional[str] = None,
+        sort_by: str = "triggered_at",
+        sort_order: str = "desc",
         page: int = 1,
         page_size: int = 20,
     ) -> Tuple[List[AlertTriggerRecord], int]:
@@ -296,18 +317,36 @@ class AlertRepository:
 
         where_clause = and_(*conditions) if conditions else True
         offset = (page - 1) * page_size
+        order_columns = self._trigger_order_columns(sort_by=sort_by, sort_order=sort_order)
         with self.db.get_session() as session:
             total = session.execute(
                 select(func.count(AlertTriggerRecord.id)).select_from(AlertTriggerRecord).where(where_clause)
             ).scalar() or 0
+            query = select(AlertTriggerRecord).where(where_clause)
+            if str(sort_by or "").strip().lower() == "rule_name":
+                query = query.outerjoin(
+                    AlertRuleRecord,
+                    AlertTriggerRecord.rule_id == AlertRuleRecord.id,
+                )
             rows = session.execute(
-                select(AlertTriggerRecord)
-                .where(where_clause)
-                .order_by(desc(AlertTriggerRecord.triggered_at), desc(AlertTriggerRecord.id))
-                .offset(offset)
-                .limit(page_size)
+                query.order_by(*order_columns).offset(offset).limit(page_size)
             ).scalars().all()
             return list(rows), int(total)
+
+    @staticmethod
+    def _trigger_order_columns(*, sort_by: str, sort_order: str):
+        from sqlalchemy import asc
+
+        key = str(sort_by or "triggered_at").strip().lower()
+        descending = str(sort_order or "desc").strip().lower() != "asc"
+        direction = desc if descending else asc
+        if key == "status":
+            return (direction(AlertTriggerRecord.status), desc(AlertTriggerRecord.id))
+        if key == "target":
+            return (direction(AlertTriggerRecord.target), desc(AlertTriggerRecord.id))
+        if key == "rule_name":
+            return (direction(AlertRuleRecord.name), desc(AlertTriggerRecord.id))
+        return (direction(AlertTriggerRecord.triggered_at), desc(AlertTriggerRecord.id))
 
     def list_notifications(
         self,

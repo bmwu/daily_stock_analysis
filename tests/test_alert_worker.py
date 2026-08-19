@@ -1064,6 +1064,35 @@ class AlertWorkerTestCase(unittest.TestCase):
         self.assertEqual(manager.get_daily_data.call_count, 2)
         manager.get_daily_data.assert_called_with("600519", days=33)
 
+    def test_technical_indicator_failed_daily_fetch_reuses_run_once_cache(self) -> None:
+        self._create_rule(
+            name="MA one",
+            target="AAPL",
+            alert_type="ma_price_cross",
+            parameters={"window": 2, "direction": "above"},
+        )
+        self._create_rule(
+            name="MA two",
+            target="AAPL",
+            alert_type="ma_price_cross",
+            parameters={"window": 2, "direction": "above"},
+        )
+        manager = MagicMock()
+        manager.get_daily_data.side_effect = RuntimeError("Yahoo Finance unavailable")
+        notifier = self._notifier()
+
+        async def _run_inline(func, *args, **kwargs):
+            return func(*args, **kwargs)
+
+        worker = AlertWorker(config_provider=lambda: self._config(), service=self.service, notifier=notifier)
+        with patch("data_provider.DataFetcherManager", return_value=manager), \
+             patch("src.services.alert_service.asyncio.to_thread", new=_run_inline):
+            stats = worker.run_once()
+
+        self.assertEqual(stats["failed"], 2)
+        self.assertEqual(manager.get_daily_data.call_count, 1)
+        self.assertEqual(len(self._triggers(status="failed")), 2)
+
     def test_db_triggered_history_deduplicates_same_daily_signal(self) -> None:
         rule = self._create_rule(
             name="MA",
