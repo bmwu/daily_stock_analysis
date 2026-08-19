@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 - [chore] 新增本地开发脚本 `scripts/dev-up.sh` 与 `scripts/dev-down.sh`：一键拉起/停止后端与前端；前端默认固定 `5173`，端口占用时自动清理后重试。
 - [chore] 新增 `scripts/dev-restart.sh`：按 `dev-down` + `dev-up` 顺序一键重启本地前后端开发服务。
+- [chore] `scripts/dev-up.sh` 新增后端健康检查等待（默认最多 30 秒）后再启动前端，降低启动阶段前端代理 `8000` 失败导致的首屏报错概率。
 - [改进] 告警触发历史表头以筛选/排序小图标点击展开下拉：状态一个筛选；规则、目标各一个筛选，并支持对应排序。
 - [改进] 告警触发历史「规则 / 目标」与规则 Tab 对齐：主行直接用持久化 `rule.name`，下行目标代码；合并观察值/阈值，去掉数据时间，并支持分页。
 - [修复] 触发历史 enrichment 在 session 内复制规则名/类型，避免 ORM 脱附后读不到名称；Web 在后端未返回 `rule_name` 时按 `rule_id` 回查规则详情补齐名称。
