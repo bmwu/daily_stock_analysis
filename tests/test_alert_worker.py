@@ -1026,7 +1026,7 @@ class AlertWorkerTestCase(unittest.TestCase):
         self.assertEqual(cooldown_attempts[0]["trigger_id"], triggers[0]["id"])
         notifier.send_with_results.assert_called_once()
 
-    def test_technical_indicator_rules_share_run_once_daily_cache(self) -> None:
+    def test_technical_indicator_rules_share_same_day_daily_cache(self) -> None:
         self._create_rule(
             name="MA one",
             target="600519",
@@ -1061,7 +1061,7 @@ class AlertWorkerTestCase(unittest.TestCase):
         self.assertEqual(first["triggered"], 2)
         self.assertEqual(second["triggered"], 2)
         self.assertEqual(len(self._triggers(status="triggered")), 2)
-        self.assertEqual(manager.get_daily_data.call_count, 2)
+        self.assertEqual(manager.get_daily_data.call_count, 1)
         manager.get_daily_data.assert_called_with("600519", days=33)
 
     def test_technical_indicator_failed_daily_fetch_reuses_run_once_cache(self) -> None:
@@ -1163,7 +1163,9 @@ class AlertWorkerTestCase(unittest.TestCase):
 
         worker = AlertWorker(config_provider=lambda: self._config(), service=self.service, notifier=self._notifier())
         with patch("data_provider.DataFetcherManager", return_value=manager), \
-             patch("src.services.alert_service.asyncio.to_thread", new=_run_inline):
+             patch("src.services.alert_service.asyncio.to_thread", new=_run_inline), \
+             patch("src.services.alert_worker.AlertWorker._market_trade_date", side_effect=["2026-05-15", "2026-05-16"]), \
+             patch("src.services.alert_service.AlertService._market_trade_date", side_effect=["2026-05-15", "2026-05-16"]):
             first = worker.run_once()
             second = worker.run_once()
 

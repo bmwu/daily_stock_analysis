@@ -17,7 +17,7 @@
 | --- | --- | --- | --- |
 | `price_cross` | `direction`: `above` / `below` | `price` | 实时价格上破或下破固定价格 |
 | `price_change_percent` | `direction`: `up` / `down` | `change_pct` | 实时涨跌幅达到指定百分比 |
-| `volume_spike` | - | `multiplier` | 最新成交量超过近 20 日均量的指定倍数 |
+| `volume_spike` | - | `multiplier`（可选 `mode=close_only|intraday`） | 最新成交量超过近 20 日均量的指定倍数 |
 
 `sentiment_shift`、`risk_flag`、`custom` 等类型只作为未来扩展占位；当前运行时不接受这些类型作为可执行规则。
 
@@ -246,7 +246,7 @@ P5 支持的 `alert_type` 与 `parameters`：
 - KDJ 使用最近 `period` 日最高/最低价计算 RSV，并用 `alpha=1/k_period`、`alpha=1/d_period` 的 EMA 得到 K/D；金叉/死叉比较 K-D 相对 0 的边缘穿越。
 - CCI 使用典型价格 `(high + low + close) / 3`，按 `period` 日均值和平均绝对偏差计算 `(TP - MA(TP)) / (0.015 * mean_deviation)`。
 - `compute_required_bars(alert_type, params)` 定义最少有效 closed bars：MA=`window+1`，RSI=`period+1`，MACD=`slow_period+signal_period+1`，KDJ=`period+k_period+d_period+1`，CCI=`period+1`。
-- 拉取天数使用 `requested_days = min(max(required_bars * 3, required_bars + 30), 365)`；API 会拒绝 `required_bars > 365` 的组合周期，避免创建永久样本不足的规则；同一 worker 轮次按 `(stock_code, requested_days)` 缓存日线数据（成功与失败均缓存），轮次结束释放。
+- 拉取天数使用 `requested_days = min(max(required_bars * 3, required_bars + 30), 365)`；API 会拒绝 `required_bars > 365` 的组合周期，避免创建永久样本不足的规则；worker 先按股票聚合当轮规则并拉取最大历史序列，日线缓存按 `(stock_code, market, trade_date)` 管理主序列，再按 `(stock_code, market, trade_date, requested_days)` 复用切片（成功与失败都缓存）。
 - 缺数据、缺列或有效样本少于 `required_bars` 写入 `degraded`；数据源异常沿用 `volume_spike` 语义返回 `evaluation_error` / `failed`，不发送通知。
 
 兼容边界：
@@ -420,7 +420,7 @@ P8 不新增规则类型、API、表结构或 worker 行为；它把 P0-P7 已�
 
 Web 告警中心 `/alerts` 是持久化规则的主要入口：以「告警规则 / 触发历史 / 通知尝试记录」三个 Tab 组织；可创建、启停、删除规则，按目标下拉筛选规则，执行一次性 dry-run 测试，查看触发历史、通知尝试和只读冷却状态。触发历史「规则 / 目标」主行直接展示与规则 Tab 相同的持久化 `rule.name`，下行展示目标代码；表头通过筛选/排序小图标点击展开下拉（状态一个筛选，规则与目标各一个筛选，并支持对应排序）。观察值与阈值合并为一列，保留评估时间并分页。批量规则的列表冷却状态是父规则摘要，子目标是否冷却以触发历史中的 `target` / `effective_target` 为准。
 
-同轮评估中，技术指标与成交量规则按 `(stock_code, requested_days)` 复用日线结果；成功与失败都会进入该轮 `daily_cache`，因此同一标的、相同拉取窗口不会每条规则都重复打外部日线 API。不同窗口或不同轮询周期仍会各自拉取。
+同轮评估中，技术指标与成交量规则先复用同一标的当日主序列，再按规则窗口切片复用；成功与失败都会进入 `daily_cache`。默认 `volume_spike` 使用 `mode=close_only`（只看已收盘日线），需要盘中量能告警时可显式设置 `mode=intraday`。
 
 Desktop 不新增原生告警管理界面；桌面用户复用内置或外部 WebUI 的 `/alerts` 页面。Desktop 回滚不需要清理额外状态。
 

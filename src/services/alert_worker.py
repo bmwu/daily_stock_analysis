@@ -10,6 +10,7 @@ import logging
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
 from src.agent.events import (
@@ -34,6 +35,7 @@ from src.market_phase_summary import (
 from src.report_language import normalize_report_language
 from src.services.alert_notification_text import get_alert_notification_labels
 from src.services.alert_service import AlertService
+from src.services.alert_indicators import TechnicalIndicatorAlert, compute_requested_days
 from src.services.decision_signal_service import DecisionSignalService
 from src.services.decision_signal_summary import (
     format_decision_signal_excerpt,
@@ -108,6 +110,8 @@ class AlertWorker:
         self._trigger_fingerprints: Dict[str, float] = {}
         self._trigger_fingerprint_ttls: Dict[str, int] = {}
         self._analysis_visibility_cache: Dict[str, Optional[Dict[str, Any]]] = {}
+        # Process-level daily cache reused across worker cycles.
+        self._daily_cache: Dict[Any, Any] = {}
 
     @staticmethod
     def _default_config_provider():
@@ -152,7 +156,8 @@ class AlertWorker:
             return stats
 
         monitor = EventMonitor()
-        daily_cache: Dict[Any, Any] = {}
+        daily_cache = self._daily_cache
+        self._prefetch_daily_data_cache(runtime_rules, daily_cache)
         self._analysis_visibility_cache = {}
         report_language = normalize_report_language(getattr(config, "report_language", "zh"))
         pending_notifications: List[PendingAlertNotification] = []
@@ -258,6 +263,96 @@ class AlertWorker:
 
         return runtime_rules
 
+    def _prefetch_daily_data_cache(self, runtime_rules: List[RuntimeAlertRule], daily_cache: Dict[Any, Any]) -> None:
+        plan = self._build_daily_prefetch_plan(runtime_rules)
+        if not plan:
+            return
+
+        from data_provider import DataFetcherManager
+
+        manager = DataFetcherManager()
+        for (stock_code, market, trade_date), requested_days_set in plan.items():
+            if not requested_days_set:
+                continue
+            max_days = max(requested_days_set)
+            primary_key = (stock_code, market, trade_date)
+            cache_keys = [(stock_code, market, trade_date, days) for days in sorted(requested_days_set)]
+            if primary_key in daily_cache:
+                for key in cache_keys:
+                    _code, _market, _trade_date, days = key
+                    if key not in daily_cache:
+                        daily_cache[key] = self._slice_daily_result(daily_cache[primary_key], days)
+                continue
+            try:
+                result = manager.get_daily_data(stock_code, days=max_days)
+            except Exception as exc:
+                daily_cache[primary_key] = exc
+                for key in cache_keys:
+                    daily_cache[key] = exc
+                continue
+
+            daily_cache[primary_key] = result
+            for key in cache_keys:
+                _code, _market, _trade_date, days = key
+                daily_cache[key] = self._slice_daily_result(result, days)
+
+    def _build_daily_prefetch_plan(self, runtime_rules: List[RuntimeAlertRule]) -> Dict[tuple[str, str, str], set[int]]:
+        plan: Dict[tuple[str, str, str], set[int]] = {}
+        for runtime_rule in runtime_rules:
+            rule = runtime_rule.rule
+            stock_code = normalize_stock_code(str(getattr(rule, "stock_code", "") or "").strip())
+            if not stock_code:
+                continue
+            market = get_market_for_stock(stock_code) or "cn"
+            trade_date = self._market_trade_date(market)
+            requested_days: Optional[int] = None
+            if isinstance(rule, VolumeAlert):
+                requested_days = 20
+            elif isinstance(rule, TechnicalIndicatorAlert):
+                try:
+                    requested_days = compute_requested_days(
+                        str(getattr(rule, "alert_type", "") or ""),
+                        dict(getattr(rule, "indicator_params", {}) or {}),
+                    )
+                except Exception:
+                    requested_days = None
+            if requested_days is None:
+                continue
+            requested_days = max(1, int(requested_days))
+            plan.setdefault((stock_code, market, trade_date), set()).add(requested_days)
+        return plan
+
+    @staticmethod
+    def _market_trade_date(market: str) -> str:
+        tz_by_market = {
+            "cn": "Asia/Shanghai",
+            "hk": "Asia/Hong_Kong",
+            "us": "America/New_York",
+            "jp": "Asia/Tokyo",
+            "kr": "Asia/Seoul",
+            "tw": "Asia/Taipei",
+        }
+        tz_name = tz_by_market.get(str(market or "").lower(), "Asia/Shanghai")
+        return datetime.now(ZoneInfo(tz_name)).date().isoformat()
+
+    @staticmethod
+    def _slice_daily_result(result: Any, requested_days: int) -> Any:
+        if isinstance(result, BaseException):
+            return result
+        if (
+            requested_days <= 0
+            or not isinstance(result, tuple)
+            or len(result) != 2
+        ):
+            return result
+        df, source = result
+        if df is None or getattr(df, "empty", True) or not hasattr(df, "tail"):
+            return result
+        try:
+            return df.tail(int(requested_days)).copy(), source
+        except Exception:
+            return result
+
     def _load_legacy_rules(self, config: Any) -> List[Tuple[str, Any]]:
         raw_rules = getattr(config, "agent_event_alert_rules_json", "")
         try:
@@ -293,6 +388,7 @@ class AlertWorker:
                     rule = VolumeAlert(
                         stock_code=stock_code,
                         multiplier=float(parameters["multiplier"]),
+                        mode=str(parameters.get("mode", "close_only")),
                         metadata=metadata,
                     )
                 else:

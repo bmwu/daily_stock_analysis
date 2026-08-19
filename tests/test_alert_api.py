@@ -307,6 +307,30 @@ class AlertApiTestCase(unittest.TestCase):
             self.assertEqual(created["alert_type"], alert_type)
             self.assertEqual(created["parameters"], parameters)
 
+    def test_volume_spike_mode_accepts_intraday_and_rejects_invalid_value(self) -> None:
+        created = self._create_rule(
+            {
+                "name": "Wuliangye intraday volume",
+                "target": "000858",
+                "alert_type": "volume_spike",
+                "parameters": {"multiplier": 2.5, "mode": "intraday"},
+            }
+        )
+        self.assertEqual(created["parameters"]["mode"], "intraday")
+
+        invalid = self.client.post(
+            "/api/v1/alerts/rules",
+            json={
+                "name": "Bad mode",
+                "target_scope": "single_symbol",
+                "target": "000858",
+                "alert_type": "volume_spike",
+                "parameters": {"multiplier": 2.5, "mode": "realtime"},
+            },
+        )
+        self.assertEqual(invalid.status_code, 400, invalid.text)
+        self.assertEqual(invalid.json()["error"], "validation_error")
+
     def test_p5_technical_indicator_rules_skip_legacy_event_validator(self) -> None:
         with patch("src.services.alert_service.validate_event_alert_rule") as legacy_validator:
             created = self._create_rule({

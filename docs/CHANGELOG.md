@@ -1,4 +1,5 @@
-# Changelog
+to
+tttttttttttttt# Changelog
 
 All notable changes to this project will be documented in this file.
 
@@ -8,10 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [chore] 新增本地开发脚本 `scripts/dev-up.sh` 与 `scripts/dev-down.sh`：一键拉起/停止后端与前端；前端默认固定 `5173`，端口占用时自动清理后重试。
+- [chore] 新增 `scripts/dev-restart.sh`：按 `dev-down` + `dev-up` 顺序一键重启本地前后端开发服务。
 - [改进] 告警触发历史表头以筛选/排序小图标点击展开下拉：状态一个筛选；规则、目标各一个筛选，并支持对应排序。
 - [改进] 告警触发历史「规则 / 目标」与规则 Tab 对齐：主行直接用持久化 `rule.name`，下行目标代码；合并观察值/阈值，去掉数据时间，并支持分页。
 - [修复] 触发历史 enrichment 在 session 内复制规则名/类型，避免 ORM 脱附后读不到名称；Web 在后端未返回 `rule_name` 时按 `rule_id` 回查规则详情补齐名称。
 - [改进] 告警 worker 同轮同标的日线拉取失败也会进入 daily_cache，避免同一轮对外部 API 重复重试。
+- [改进] 告警 worker 日线缓存改为按 `(stock_code, market, trade_date)` 管理：同日同标的首次拉取最大历史序列，后续规则按窗口切片复用，减少重复请求与熔断触发。
+- [改进] `volume_spike` 新增 `mode` 参数（`close_only|intraday`）：默认 `close_only` 仅使用已收盘日线，盘中量能告警需显式开启 `intraday`。
 - [改进] 首页大盘账户/持仓金额按账户币种显示符号（如 USD `$`），不再写死 `¥`。
 - [改进] 告警推送阶段摘要取值本地化：阶段/市场/触发来源/数据质量等级与 `quote: fallback` 类限制按 `REPORT_LANGUAGE` 显示（如 `盘中`、`美股`、`告警`、`可用`、`行情：降级`）。
 - [改进] 同一轮告警若多条规则挂到同一条 AI 决策信号，合并为一条通知并列出全部触发规则。

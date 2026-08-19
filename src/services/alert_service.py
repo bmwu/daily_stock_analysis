@@ -8,7 +8,9 @@ import json
 import logging
 import re
 from datetime import date, datetime
+from zoneinfo import ZoneInfo
 from typing import Any, Dict, List, Optional
+import pandas as pd
 
 from src.agent.events import (
     EventMonitor,
@@ -24,6 +26,7 @@ from src.services.alert_indicators import (
     TechnicalIndicatorAlert,
     compute_requested_days,
     evaluate_indicator_alert,
+    normalize_ohlcv,
     normalize_indicator_parameters,
     threshold_for_indicator,
 )
@@ -70,6 +73,8 @@ from src.storage import (
     DatabaseManager,
 )
 from src.utils.sanitize import sanitize_diagnostic_text
+from src.core.trading_calendar import get_market_for_stock
+from data_provider.base import normalize_stock_code
 
 
 LEGACY_RUNTIME_ALERT_TYPES = frozenset({"price_cross", "price_change_percent", "volume_spike"})
@@ -448,7 +453,7 @@ class AlertService:
         daily_cache: Optional[Dict[Any, Any]] = None,
     ) -> Dict[str, Any]:
         requested_days = 20
-        cache_key = (rule.stock_code, requested_days)
+        _primary_cache_key, cache_key = self._build_daily_cache_keys(rule.stock_code, requested_days)
 
         def _fetch_daily_data():
             from data_provider import DataFetcherManager
@@ -499,6 +504,19 @@ class AlertService:
                 data_timestamp=self._extract_daily_timestamp(df),
             )
 
+        mode = str(getattr(rule, "mode", "close_only") or "close_only").strip().lower()
+        if mode != "intraday":
+            has_date_context = any(col in getattr(df, "columns", []) for col in ("date", "trade_date", "datetime", "time"))
+            has_datetime_index = isinstance(getattr(df, "index", None), pd.DatetimeIndex)
+            if has_date_context or has_datetime_index:
+                try:
+                    normalized = normalize_ohlcv(df, required_columns=("volume",), now=datetime.now())
+                    if normalized is not None and not normalized.empty:
+                        df = normalized
+                except ValueError:
+                    # Fallback to original dataframe when schema normalization fails.
+                    pass
+
         try:
             avg_vol = float(df["volume"].mean())
             latest_vol = float(df["volume"].iloc[-1])
@@ -522,11 +540,12 @@ class AlertService:
         ratio = latest_vol / avg_vol
         threshold = avg_vol * rule.multiplier
         data_timestamp = self._extract_daily_timestamp(df)
+        mode_suffix = " (intraday)" if mode == "intraday" else ""
         if latest_vol > avg_vol * rule.multiplier:
             return self._triggered(
                 rule,
                 latest_vol,
-                f"{rule.stock_code} volume spike: {latest_vol:,.0f} ({ratio:.1f}x avg)",
+                f"{rule.stock_code} volume spike{mode_suffix}: {latest_vol:,.0f} ({ratio:.1f}x avg)",
                 threshold=threshold,
                 data_source="daily_data",
                 data_timestamp=data_timestamp,
@@ -534,7 +553,7 @@ class AlertService:
         return self._not_triggered(
             rule,
             latest_vol,
-            f"{rule.stock_code} volume ratio {ratio:.1f}x did not exceed {rule.multiplier}x",
+            f"{rule.stock_code} volume ratio{mode_suffix} {ratio:.1f}x did not exceed {rule.multiplier}x",
             threshold=threshold,
             data_source="daily_data",
             data_timestamp=data_timestamp,
@@ -548,8 +567,8 @@ class AlertService:
         daily_cache: Optional[Dict[Any, Any]] = None,
     ) -> Any:
         """Reuse per-round daily bars; also cache fetch failures to avoid repeat API calls."""
-        if daily_cache is not None and cache_key in daily_cache:
-            cached = daily_cache[cache_key]
+        cached = self._lookup_cached_daily_data(cache_key, daily_cache=daily_cache)
+        if cached is not None:
             if isinstance(cached, BaseException):
                 raise cached
             return cached
@@ -563,7 +582,116 @@ class AlertService:
 
         if daily_cache is not None:
             daily_cache[cache_key] = result
+            # When this is a sliced daily cache key, also keep a full-series
+            # per-day cache entry to support fallback slicing.
+            if len(cache_key) == 4 and isinstance(cache_key[3], int):
+                stock_code, market, trade_date, _requested_days = cache_key
+                daily_cache.setdefault((stock_code, market, trade_date), result)
         return result
+
+    @staticmethod
+    def _lookup_cached_daily_data(
+        cache_key: tuple[Any, ...],
+        *,
+        daily_cache: Optional[Dict[Any, Any]] = None,
+    ) -> Optional[Any]:
+        if daily_cache is None:
+            return None
+        if cache_key in daily_cache:
+            return daily_cache[cache_key]
+        # New daily scoped cache format:
+        # - full series: (stock_code, market, trade_date)
+        # - sliced data: (stock_code, market, trade_date, requested_days)
+        if (
+            isinstance(cache_key, tuple)
+            and len(cache_key) == 4
+            and isinstance(cache_key[0], str)
+            and isinstance(cache_key[1], str)
+            and isinstance(cache_key[2], str)
+            and isinstance(cache_key[3], int)
+        ):
+            stock_code, market, trade_date, requested_days = cache_key
+            full_key = (stock_code, market, trade_date)
+            if full_key in daily_cache:
+                candidate_value = daily_cache[full_key]
+                sliced = AlertService._slice_daily_result(candidate_value, requested_days)
+                daily_cache[cache_key] = sliced
+                return sliced
+
+        if not (
+            isinstance(cache_key, tuple)
+            and len(cache_key) == 2
+            and isinstance(cache_key[0], str)
+            and isinstance(cache_key[1], int)
+        ):
+            return None
+
+        stock_code, requested_days = cache_key
+        if requested_days <= 0:
+            return None
+
+        candidate_key = None
+        candidate_days = None
+        for key in daily_cache.keys():
+            if not (
+                isinstance(key, tuple)
+                and len(key) == 2
+                and isinstance(key[0], str)
+                and isinstance(key[1], int)
+            ):
+                continue
+            key_code, key_days = key
+            if key_code != stock_code or key_days < requested_days:
+                continue
+            if candidate_days is None or key_days < candidate_days:
+                candidate_key = key
+                candidate_days = key_days
+
+        if candidate_key is None:
+            return None
+
+        candidate_value = daily_cache[candidate_key]
+        sliced = AlertService._slice_daily_result(candidate_value, requested_days)
+        daily_cache[cache_key] = sliced
+        return sliced
+
+    @staticmethod
+    def _build_daily_cache_keys(stock_code: str, requested_days: int) -> tuple[tuple[str, str, str], tuple[str, str, str, int]]:
+        normalized_code = normalize_stock_code(str(stock_code or "").strip())
+        market = get_market_for_stock(normalized_code) or "cn"
+        trade_date = AlertService._market_trade_date(market)
+        return (normalized_code, market, trade_date), (normalized_code, market, trade_date, int(requested_days))
+
+    @staticmethod
+    def _market_trade_date(market: str) -> str:
+        tz_by_market = {
+            "cn": "Asia/Shanghai",
+            "hk": "Asia/Hong_Kong",
+            "us": "America/New_York",
+            "jp": "Asia/Tokyo",
+            "kr": "Asia/Seoul",
+            "tw": "Asia/Taipei",
+        }
+        tz_name = tz_by_market.get(str(market or "").lower(), "Asia/Shanghai")
+        return datetime.now(ZoneInfo(tz_name)).date().isoformat()
+
+    @staticmethod
+    def _slice_daily_result(result: Any, requested_days: int) -> Any:
+        if isinstance(result, BaseException):
+            return result
+        if (
+            requested_days <= 0
+            or not isinstance(result, tuple)
+            or len(result) != 2
+        ):
+            return result
+        df, source = result
+        if df is None or getattr(df, "empty", True) or not hasattr(df, "tail"):
+            return result
+        try:
+            return df.tail(int(requested_days)).copy(), source
+        except Exception:
+            return result
 
     async def _evaluate_technical_indicator(
         self,
@@ -572,7 +700,7 @@ class AlertService:
         daily_cache: Optional[Dict[Any, Any]] = None,
     ) -> Dict[str, Any]:
         requested_days = compute_requested_days(rule.alert_type, rule.indicator_params)
-        cache_key = (rule.stock_code, requested_days)
+        _primary_cache_key, cache_key = self._build_daily_cache_keys(rule.stock_code, requested_days)
 
         def _fetch_daily_data():
             from data_provider import DataFetcherManager
@@ -1022,7 +1150,13 @@ class AlertService:
             }
 
         if alert_type == "volume_spike":
-            return {"multiplier": self._positive_float(parameters.get("multiplier"), "multiplier")}
+            mode = str(parameters.get("mode", "close_only") or "close_only").strip().lower()
+            if mode not in {"close_only", "intraday"}:
+                raise AlertServiceError(f"invalid mode: {mode}")
+            return {
+                "multiplier": self._positive_float(parameters.get("multiplier"), "multiplier"),
+                "mode": mode,
+            }
 
         if alert_type in TECHNICAL_ALERT_TYPES:
             try:
@@ -1184,6 +1318,7 @@ class AlertService:
             return VolumeAlert(
                 stock_code=data["target"],
                 multiplier=float(parameters["multiplier"]),
+                mode=str(parameters.get("mode", "close_only")),
                 metadata=metadata,
             )
         if data["alert_type"] in TECHNICAL_ALERT_TYPES:

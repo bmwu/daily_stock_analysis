@@ -148,6 +148,7 @@ class VolumeAlert(AlertRule):
     """Alert when volume exceeds N× average."""
     alert_type: AlertType = AlertType.VOLUME_SPIKE
     multiplier: float = 2.0  # trigger when volume > multiplier × avg
+    mode: str = "close_only"  # close_only | intraday
 
     def __post_init__(self):
         if not self.description:
@@ -387,6 +388,7 @@ class EventMonitor:
                 entry["change_pct"] = rule.change_pct
             elif isinstance(rule, VolumeAlert):
                 entry["multiplier"] = rule.multiplier
+                entry["mode"] = rule.mode
             results.append(entry)
         return results
 
@@ -416,6 +418,7 @@ class EventMonitor:
                     rule = VolumeAlert(
                         stock_code=stock_code,
                         multiplier=float(entry.get("multiplier", 2.0)),
+                        mode=str(entry.get("mode", "close_only")),
                     )
                 else:
                     raise ValueError(f"unsupported alert_type: {alert_type}")
@@ -518,6 +521,9 @@ def validate_event_alert_rule(rule: Dict[str, Any]) -> None:
             raise ValueError(f"invalid multiplier: {rule.get('multiplier')}") from exc
         if multiplier <= 0:
             raise ValueError("multiplier must be > 0")
+        mode = str(rule.get("mode", "close_only")).strip().lower()
+        if mode not in {"close_only", "intraday"}:
+            raise ValueError(f"invalid mode: {mode}")
 
 
 def build_event_monitor_from_config(config=None, notifier=None) -> Optional[EventMonitor]:
