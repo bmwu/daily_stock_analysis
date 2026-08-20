@@ -354,6 +354,159 @@ class TestSearXNGSearchProvider(unittest.TestCase):
         self.assertIn("https://public-2.example/search", mock_get.call_args_list[2][0][0])
 
     @patch("src.search_service.requests.get")
+    def test_public_mode_rate_limit_penalizes_instance_for_next_search(self, mock_get):
+        feed_urls = [f"https://public-{i}.example/" for i in range(1, 9)]
+        max_attempts = SearXNGSearchProvider.PUBLIC_INSTANCES_MAX_ATTEMPTS
+        mock_get.side_effect = [
+            self._response(json_payload=self._public_feed(feed_urls)),
+            *[
+                self._response(
+                    status_code=429,
+                    text="Too Many Requests",
+                    headers={"content-type": "text/plain", "Retry-After": "120"},
+                )
+                for _ in range(max_attempts)
+            ],
+            self._response(
+                json_payload={
+                    "results": [
+                        {
+                            "title": "ok",
+                            "url": "https://ok.example/news",
+                            "content": "body",
+                        }
+                    ]
+                }
+            ),
+        ]
+
+        provider = self._create_provider(use_public_instances=True)
+        first = provider.search("first", max_results=5)
+        second = provider.search("second", max_results=5)
+
+        self.assertFalse(first.success)
+        self.assertIn("限流", first.error_message or "")
+        self.assertIn("建议配置", first.error_message or "")
+        self.assertIn("公共 SearXNG", first.error_message or "")
+        self.assertNotIn("settings.yml", first.error_message or "")
+        self.assertTrue(second.success)
+        self.assertEqual(mock_get.call_count, 1 + max_attempts + 1)
+        self.assertIn("https://public-1.example/search", mock_get.call_args_list[1][0][0])
+        second_url = mock_get.call_args_list[-1][0][0]
+        self.assertTrue(
+            second_url.endswith("https://public-7.example/search")
+            or second_url.endswith("https://public-8.example/search")
+            or "public-7.example" in second_url
+            or "public-8.example" in second_url
+        )
+        self.assertTrue(
+            SearXNGSearchProvider._is_instance_penalized("https://public-1.example")
+        )
+
+    @patch("src.search_service.requests.get")
+    def test_public_mode_penalizes_forbidden_and_bad_json_hosts(self, mock_get):
+        feed_urls = [
+            "https://public-1.example/",
+            "https://public-2.example/",
+            "https://public-3.example/",
+        ]
+        mock_get.side_effect = [
+            self._response(json_payload=self._public_feed(feed_urls)),
+            self._response(
+                status_code=403,
+                text="<!DOCTYPE HTML><title>403 Forbidden</title>",
+                headers={"content-type": "text/html"},
+            ),
+            self._response(
+                status_code=200,
+                text="<html>not json</html>",
+                headers={"content-type": "text/html"},
+                json_side_effect=ValueError("no json"),
+            ),
+            self._response(
+                json_payload={
+                    "results": [
+                        {"title": "ok", "url": "https://ok.example/a", "content": "body"}
+                    ]
+                }
+            ),
+        ]
+
+        provider = self._create_provider(use_public_instances=True)
+        resp = provider.search("query", max_results=5)
+
+        self.assertTrue(resp.success)
+        self.assertTrue(SearXNGSearchProvider._is_instance_penalized("https://public-1.example"))
+        self.assertTrue(SearXNGSearchProvider._is_instance_penalized("https://public-2.example"))
+        self.assertIn("https://public-3.example/search", mock_get.call_args_list[-1][0][0])
+
+    @patch("src.search_service.requests.get")
+    def test_public_mode_browser_challenge_uses_short_blocked_message(self, mock_get):
+        feed_urls = [
+            "https://public-1.example/",
+            "https://public-2.example/",
+        ]
+        mock_get.side_effect = [
+            self._response(json_payload=self._public_feed(feed_urls)),
+            self._response(
+                status_code=403,
+                json_payload={"error": "Forbidden: browser verification required"},
+                headers={"content-type": "application/json"},
+            ),
+            self._response(
+                json_payload={
+                    "results": [
+                        {"title": "ok", "url": "https://ok.example/a", "content": "body"}
+                    ]
+                }
+            ),
+        ]
+
+        provider = self._create_provider(use_public_instances=True)
+        resp = provider.search("query", max_results=5)
+
+        self.assertTrue(resp.success)
+        self.assertTrue(SearXNGSearchProvider._is_instance_penalized("https://public-1.example"))
+        # First failure stays in logs; returned success path should not mention settings.yml.
+        self.assertNotIn("settings.yml", resp.error_message or "")
+
+    @patch("src.search_service._get_with_retry")
+    def test_self_hosted_forbidden_keeps_settings_hint(self, mock_get):
+        mock_get.return_value = self._response(
+            status_code=403,
+            text="Forbidden",
+            headers={"content-type": "text/plain"},
+        )
+        provider = self._create_provider(["https://searx.example.org"])
+        resp = provider.search("query", max_results=5)
+        self.assertFalse(resp.success)
+        self.assertIn("settings.yml", resp.error_message or "")
+
+    @patch("src.search_service.requests.get")
+    def test_public_mode_skips_already_penalized_instances(self, mock_get):
+        feed_urls = [
+            "https://public-1.example/",
+            "https://public-2.example/",
+            "https://public-3.example/",
+        ]
+        SearXNGSearchProvider._penalize_instance(
+            "https://public-1.example",
+            status_code=429,
+            retry_after_seconds=600,
+        )
+        mock_get.side_effect = [
+            self._response(json_payload=self._public_feed(feed_urls)),
+            self._response(json_payload={"results": []}),
+        ]
+
+        provider = self._create_provider(use_public_instances=True)
+        resp = provider.search("query", max_results=5)
+
+        self.assertTrue(resp.success)
+        self.assertEqual(mock_get.call_count, 2)
+        self.assertIn("https://public-2.example/search", mock_get.call_args_list[1][0][0])
+
+    @patch("src.search_service.requests.get")
     def test_public_mode_returns_failure_when_feed_unavailable(self, mock_get):
         import requests as req_module
 

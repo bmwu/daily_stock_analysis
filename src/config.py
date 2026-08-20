@@ -1535,7 +1535,15 @@ class Config:
 
         minimax_keys_str = os.getenv('MINIMAX_API_KEYS', '')
         minimax_api_keys = [k.strip() for k in minimax_keys_str.split(',') if k.strip()]
-        
+        if not minimax_api_keys:
+            # Reuse the LLM MiniMax key for Coding Plan web search when search
+            # keys are omitted — same product family, separate config entry.
+            llm_minimax_key = (os.getenv('LLM_MINIMAX_API_KEY') or '').strip()
+            if llm_minimax_key:
+                minimax_api_keys = [llm_minimax_key]
+                logger.info(
+                    "MINIMAX_API_KEYS 未配置，已复用 LLM_MINIMAX_API_KEY 作为新闻搜索 Key"
+                )
         tavily_keys_str = os.getenv('TAVILY_API_KEYS', '')
         tavily_api_keys = [k.strip() for k in tavily_keys_str.split(',') if k.strip()]
         

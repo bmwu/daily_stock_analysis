@@ -1714,13 +1714,37 @@ class SearXNGSearchProvider(BaseSearchProvider):
     PUBLIC_INSTANCES_CACHE_TTL_SECONDS = 3600
     PUBLIC_INSTANCES_STALE_REFRESH_BACKOFF_SECONDS = 60
     PUBLIC_INSTANCES_POOL_LIMIT = 20
-    PUBLIC_INSTANCES_MAX_ATTEMPTS = 3
+    # Public pools mix rate-limited / HTML / WAF instances; try more than a
+    # handful so one search can skip bad hosts after short-circuit penalties.
+    PUBLIC_INSTANCES_MAX_ATTEMPTS = 6
     PUBLIC_INSTANCES_TIMEOUT_SECONDS = 5
     SELF_HOSTED_TIMEOUT_SECONDS = 10
+    RATE_LIMIT_COOLDOWN_CAP_SECONDS = 900
+    INSTANCE_FAILURE_COOLDOWN_SECONDS = {
+        "rate_limit": 300,
+        "unavailable": 180,
+        "forbidden": 1800,
+        "blocked": 1800,
+        "bad_payload": 900,
+        "timeout": 60,
+        "network": 60,
+    }
+    _STATUS_FAILURE_REASON = {
+        401: "forbidden",
+        403: "forbidden",
+        418: "blocked",
+        429: "rate_limit",
+        500: "unavailable",
+        502: "unavailable",
+        503: "unavailable",
+        504: "unavailable",
+    }
 
     _public_instances_cache: Optional[Tuple[float, List[str]]] = None
     _public_instances_stale_retry_after: float = 0.0
     _public_instances_lock = threading.Lock()
+    _penalized_instances: Dict[str, float] = {}
+    _penalty_lock = threading.Lock()
 
     def __init__(self, base_urls: Optional[List[str]] = None, *, use_public_instances: bool = False):
         normalized_base_urls = [url.rstrip("/") for url in (base_urls or []) if url.strip()]
@@ -1740,6 +1764,125 @@ class SearXNGSearchProvider(BaseSearchProvider):
         with cls._public_instances_lock:
             cls._public_instances_cache = None
             cls._public_instances_stale_retry_after = 0.0
+        with cls._penalty_lock:
+            cls._penalized_instances.clear()
+
+    @staticmethod
+    def _normalize_instance_url(base_url: str) -> str:
+        return str(base_url or "").rstrip("/")
+
+    @classmethod
+    def _parse_retry_after_seconds(cls, response: Any) -> Optional[float]:
+        headers = getattr(response, "headers", None) or {}
+        raw = headers.get("Retry-After") if hasattr(headers, "get") else None
+        if raw is None:
+            return None
+        text = str(raw).strip()
+        if not text:
+            return None
+        try:
+            return max(0.0, float(text))
+        except ValueError:
+            try:
+                retry_at = parsedate_to_datetime(text)
+                return max(0.0, retry_at.timestamp() - time.time())
+            except Exception:
+                return None
+
+    @classmethod
+    def _penalize_instance(
+        cls,
+        base_url: str,
+        *,
+        reason: Optional[str] = None,
+        status_code: Optional[int] = None,
+        retry_after_seconds: Optional[float] = None,
+    ) -> None:
+        normalized = cls._normalize_instance_url(base_url)
+        if not normalized:
+            return
+        failure_reason = reason or cls._STATUS_FAILURE_REASON.get(int(status_code or 0))
+        if not failure_reason:
+            return
+        cooldown = float(cls.INSTANCE_FAILURE_COOLDOWN_SECONDS.get(failure_reason, 120))
+        if failure_reason == "rate_limit" and retry_after_seconds is not None and retry_after_seconds > 0:
+            cooldown = min(float(retry_after_seconds), float(cls.RATE_LIMIT_COOLDOWN_CAP_SECONDS))
+        until = time.time() + cooldown
+        with cls._penalty_lock:
+            previous = cls._penalized_instances.get(normalized, 0.0)
+            cls._penalized_instances[normalized] = max(previous, until)
+            logger.debug(
+                "[SearXNG] 实例进入冷却: %s reason=%s cooldown=%.0fs",
+                normalized,
+                failure_reason,
+                cooldown,
+            )
+
+    @classmethod
+    def _penalty_until(cls, base_url: str) -> float:
+        normalized = cls._normalize_instance_url(base_url)
+        with cls._penalty_lock:
+            return float(cls._penalized_instances.get(normalized, 0.0) or 0.0)
+
+    @classmethod
+    def _is_instance_penalized(cls, base_url: str, now: Optional[float] = None) -> bool:
+        current = time.time() if now is None else now
+        return cls._penalty_until(base_url) > current
+
+    @classmethod
+    def _prune_expired_penalties(cls, now: Optional[float] = None) -> None:
+        current = time.time() if now is None else now
+        with cls._penalty_lock:
+            expired = [url for url, until in cls._penalized_instances.items() if until <= current]
+            for url in expired:
+                cls._penalized_instances.pop(url, None)
+
+    @staticmethod
+    def _looks_like_browser_challenge(text: str) -> bool:
+        lowered = str(text or "").lower()
+        markers = (
+            "browser verification",
+            "verification required",
+            "just a moment",
+            "attention required",
+            "cf-challenge",
+            "cf-browser",
+            "captcha",
+            "enable javascript",
+            "cloudflare",
+        )
+        return any(marker in lowered for marker in markers)
+
+    @classmethod
+    def _failure_reason_for_response(cls, response: Any, error_msg: str) -> Optional[str]:
+        status_code = int(getattr(response, "status_code", 0) or 0)
+        if cls._looks_like_browser_challenge(error_msg) or cls._looks_like_browser_challenge(
+            getattr(response, "text", "") or ""
+        ):
+            return "blocked"
+        return cls._STATUS_FAILURE_REASON.get(status_code)
+
+    def _format_instance_http_error(self, response: Any, raw_error: str) -> str:
+        status_code = int(getattr(response, "status_code", 0) or 0)
+        detail = str(raw_error or "").strip() or f"HTTP {status_code}"
+        if self._looks_like_browser_challenge(detail) or self._looks_like_browser_challenge(
+            getattr(response, "text", "") or ""
+        ):
+            return "触发浏览器验证/反爬拦截"
+        if status_code == 429:
+            return detail if "限流" in detail else f"{detail}（限流）"
+        if status_code in {502, 503, 504}:
+            return f"服务暂不可用（HTTP {status_code}）"
+        if status_code == 418:
+            return "被实例拒绝（HTTP 418）"
+        if status_code in {401, 403}:
+            if self._use_public_instances:
+                return "拒绝访问（公共实例未开放 JSON 或触发反爬）"
+            return (
+                f"{detail}；SearXNG 实例可能未启用 JSON 输出（请检查 settings.yml），"
+                "或实例/代理拒绝了本次访问"
+            )
+        return detail[:160]
 
     @staticmethod
     def _parse_http_error(response) -> str:
@@ -1756,6 +1899,9 @@ class SearXNGSearchProvider(BaseSearchProvider):
                 return str(error_data)
             raw_text = getattr(response, "text", "")
             body = raw_text.strip() if isinstance(raw_text, str) else ""
+            if response.status_code == 429:
+                detail = body[:200] if body else "Too Many Requests"
+                return f"{detail}（限流）"
             return body[:200] if body else f"HTTP {response.status_code}"
         except Exception:
             raw_text = getattr(response, "text", "")
@@ -1890,6 +2036,18 @@ class SearXNGSearchProvider(BaseSearchProvider):
         ordered = pool[start:] + pool[:start]
         return ordered[:max_attempts]
 
+    def _select_candidates(self, pool: List[str], *, max_attempts: int) -> List[str]:
+        """Prefer non-penalized instances; if all are cooling down, try soonest-to-expire."""
+        if not pool or max_attempts <= 0:
+            return []
+        self._prune_expired_penalties()
+        now = time.time()
+        available = [url for url in pool if not self._is_instance_penalized(url, now)]
+        if available:
+            return self._rotate_candidates(available, max_attempts=max_attempts)
+        ranked = sorted(pool, key=lambda url: (self._penalty_until(url), url))
+        return ranked[:max_attempts]
+
     def _do_search(  # type: ignore[override]
         self,
         query: str,
@@ -1920,23 +2078,26 @@ class SearXNGSearchProvider(BaseSearchProvider):
             response = request_get(search_url, headers=headers, params=params, timeout=timeout)
 
             if response.status_code != 200:
-                error_msg = self._parse_http_error(response)
-                if response.status_code == 403:
-                    error_msg = (
-                        f"{error_msg}；SearXNG 实例可能未启用 JSON 输出（请检查 settings.yml），"
-                        "或实例/代理拒绝了本次访问"
-                    )
+                raw_error = self._parse_http_error(response)
+                failure_reason = self._failure_reason_for_response(response, raw_error)
+                self._penalize_instance(
+                    base_url,
+                    reason=failure_reason,
+                    status_code=response.status_code,
+                    retry_after_seconds=self._parse_retry_after_seconds(response),
+                )
                 return SearchResponse(
                     query=query,
                     results=[],
                     provider=self.name,
                     success=False,
-                    error_message=error_msg,
+                    error_message=self._format_instance_http_error(response, raw_error),
                 )
 
             try:
                 data = response.json()
             except Exception:
+                self._penalize_instance(base_url, reason="bad_payload")
                 return SearchResponse(
                     query=query,
                     results=[],
@@ -1946,6 +2107,7 @@ class SearXNGSearchProvider(BaseSearchProvider):
                 )
 
             if not isinstance(data, dict):
+                self._penalize_instance(base_url, reason="bad_payload")
                 return SearchResponse(
                     query=query,
                     results=[],
@@ -1991,6 +2153,7 @@ class SearXNGSearchProvider(BaseSearchProvider):
             return SearchResponse(query=query, results=results, provider=self.name, success=True)
 
         except requests.exceptions.Timeout:
+            self._penalize_instance(base_url, reason="timeout")
             return SearchResponse(
                 query=query,
                 results=[],
@@ -1999,6 +2162,7 @@ class SearXNGSearchProvider(BaseSearchProvider):
                 error_message="请求超时",
             )
         except requests.exceptions.RequestException as e:
+            self._penalize_instance(base_url, reason="network")
             return SearchResponse(
                 query=query,
                 results=[],
@@ -2031,29 +2195,25 @@ class SearXNGSearchProvider(BaseSearchProvider):
         """Execute SearXNG search with instance rotation and per-request failover."""
         start_time = time.time()
         if self._base_urls:
-            candidates = self._rotate_candidates(
-                self._base_urls,
-                max_attempts=len(self._base_urls),
-            )
+            pool = list(self._base_urls)
+            max_attempts = len(pool)
             retry_enabled = True
             timeout = self.SELF_HOSTED_TIMEOUT_SECONDS
             empty_error = "SearXNG 未配置可用实例"
         elif self._use_public_instances:
-            public_instances = self._get_public_instances()
-            candidates = self._rotate_candidates(
-                public_instances,
-                max_attempts=min(len(public_instances), self.PUBLIC_INSTANCES_MAX_ATTEMPTS),
-            )
+            pool = self._get_public_instances()
+            max_attempts = min(len(pool), self.PUBLIC_INSTANCES_MAX_ATTEMPTS)
             retry_enabled = False
             timeout = self.PUBLIC_INSTANCES_TIMEOUT_SECONDS
             empty_error = "未获取到可用的公共 SearXNG 实例"
         else:
-            candidates = []
+            pool = []
+            max_attempts = 0
             retry_enabled = False
             timeout = self.PUBLIC_INSTANCES_TIMEOUT_SECONDS
             empty_error = "SearXNG 未配置可用实例"
 
-        if not candidates:
+        if not pool or max_attempts <= 0:
             return SearchResponse(
                 query=query,
                 results=[],
@@ -2064,37 +2224,64 @@ class SearXNGSearchProvider(BaseSearchProvider):
             )
 
         errors: List[str] = []
-        for base_url in candidates:
-            response = self._do_search(
-                query,
-                base_url,
-                max_results,
-                days=days,
-                timeout=timeout,
-                retry_enabled=retry_enabled,
+        tried: set[str] = set()
+        # Keep pulling fresh non-penalized hosts within one query so a streak of
+        # 403/418/HTML public instances does not stop after the first batch.
+        while len(tried) < max_attempts:
+            remaining_pool = [url for url in pool if url not in tried]
+            batch = self._select_candidates(
+                remaining_pool,
+                max_attempts=max_attempts - len(tried),
             )
-            response.search_time = time.time() - start_time
-            if response.success:
-                logger.info(
-                    "[%s] 搜索 '%s' 成功，实例=%s，返回 %s 条结果，耗时 %.2fs",
-                    self.name,
+            if not batch:
+                break
+            progress = False
+            for base_url in batch:
+                if base_url in tried:
+                    continue
+                tried.add(base_url)
+                progress = True
+                response = self._do_search(
                     query,
                     base_url,
-                    len(response.results),
-                    response.search_time,
+                    max_results,
+                    days=days,
+                    timeout=timeout,
+                    retry_enabled=retry_enabled,
                 )
-                return response
+                response.search_time = time.time() - start_time
+                if response.success:
+                    logger.info(
+                        "[%s] 搜索 '%s' 成功，实例=%s，返回 %s 条结果，耗时 %.2fs",
+                        self.name,
+                        query,
+                        base_url,
+                        len(response.results),
+                        response.search_time,
+                    )
+                    return response
 
-            errors.append(f"{base_url}: {response.error_message or '未知错误'}")
-            logger.warning("[%s] 实例 %s 搜索失败: %s", self.name, base_url, response.error_message)
+                errors.append(f"{base_url}: {response.error_message or '未知错误'}")
+                logger.warning("[%s] 实例 %s 搜索失败: %s", self.name, base_url, response.error_message)
+            if not progress:
+                break
 
         elapsed = time.time() - start_time
+        if self._use_public_instances:
+            sample = "；".join(errors[:2]) if errors else empty_error
+            error_message = (
+                f"公共 SearXNG 暂不可用（已尝试 {len(tried)} 个实例）。"
+                f"{sample}。"
+                "建议配置 Tavily/Bocha/Brave/MiniMax，或 SEARXNG_BASE_URLS 自建实例"
+            )
+        else:
+            error_message = "；".join(errors[:3]) if errors else empty_error
         return SearchResponse(
             query=query,
             results=[],
             provider=self.name,
             success=False,
-            error_message="；".join(errors[:3]) if errors else empty_error,
+            error_message=error_message,
             search_time=elapsed,
         )
 
