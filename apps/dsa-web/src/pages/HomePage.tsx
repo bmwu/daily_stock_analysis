@@ -26,6 +26,7 @@ import {
 import { useDashboardLifecycle, useHomeDashboardState } from '../hooks';
 import { useWatchlist } from '../hooks/useWatchlist';
 import { useUiLanguage } from '../contexts/UiLanguageContext';
+import { useStockPoolStore } from '../stores/stockPoolStore';
 import type { SetupStatusResponse } from '../types/systemConfig';
 import { normalizeReportLanguage } from '../utils/reportLanguage';
 import type {
@@ -36,9 +37,20 @@ import type {
   StockBarItem,
   TaskInfo,
 } from '../types/analysis';
+import { RUNNING_MARKET_REVIEW_HISTORY_ID } from '../types/analysis';
 import type { RunFlowSnapshotSource } from '../types/runFlow';
 import { getTodayInShanghai } from '../utils/format';
 import { normalizeStockCode } from '../utils/stockCode';
+
+const isActiveMarketReviewTask = (task: TaskInfo): boolean => {
+  const reportType = (task.reportType || '').toLowerCase();
+  const code = (task.stockCode || '').toUpperCase();
+  const isMarket = reportType === 'market_review' || code === 'MARKET' || code === 'MARKET_REVIEW';
+  if (!isMarket) {
+    return false;
+  }
+  return task.status === 'pending' || task.status === 'processing' || task.status === 'cancel_requested';
+};
 
 type MarketReviewNotice = {
   variant: 'success' | 'warning' | 'danger';
@@ -192,6 +204,7 @@ const HomePage: React.FC = () => {
   const [selectedStrategyId, setSelectedStrategyId] = useState('');
   const [strategyMenuOpen, setStrategyMenuOpen] = useState(false);
   const [runFlowDrawer, setRunFlowDrawer] = useState<RunFlowDrawerState>({ open: false });
+  const [selectedRunningMarketReviewTaskId, setSelectedRunningMarketReviewTaskId] = useState<string | null>(null);
   const [duplicateBannerVisible, setDuplicateBannerVisible] = useState(false);
   const [sidebarWorkspaceTab, setSidebarWorkspaceTab] = useState<HomeWorkspaceTab>('history');
   const [isBatchAnalyzingWatchlist, setIsBatchAnalyzingWatchlist] = useState(false);
@@ -664,13 +677,60 @@ const HomePage: React.FC = () => {
     setMarketReviewPayload(null);
     setMarketReviewNotice(null);
     setMarketReviewError(null);
+    setSelectedRunningMarketReviewTaskId(null);
   }, [stopMarketReviewPolling]);
 
+  const activeMarketReviewTask = useMemo(
+    () => activeTasks.find(isActiveMarketReviewTask) || null,
+    [activeTasks],
+  );
+
   const handleHistoryItemClick = useCallback((recordId: number) => {
+    if (recordId === RUNNING_MARKET_REVIEW_HISTORY_ID) {
+      const runningTask = activeTasks.find(isActiveMarketReviewTask);
+      if (!runningTask) {
+        return;
+      }
+      stopMarketReviewPolling();
+      setMarketReviewReport(null);
+      setMarketReviewPayload(null);
+      setMarketReviewError(null);
+      setSelectedRunningMarketReviewTaskId(runningTask.taskId);
+      setMarketReviewNotice({
+        variant: 'warning',
+        title: t('home.marketReviewSelectRunning'),
+        message: runningTask.message || t('home.marketReviewInProgressHint'),
+      });
+      setSidebarOpen(false);
+      return;
+    }
     clearMarketReviewState();
     void selectHistoryItem(recordId);
     setSidebarOpen(false);
-  }, [clearMarketReviewState, selectHistoryItem]);
+  }, [activeTasks, clearMarketReviewState, selectHistoryItem, stopMarketReviewPolling, t]);
+
+  useEffect(() => {
+    if (!selectedRunningMarketReviewTaskId) {
+      return;
+    }
+    const stillRunning = activeTasks.some(
+      (task) => task.taskId === selectedRunningMarketReviewTaskId && isActiveMarketReviewTask(task),
+    );
+    if (stillRunning) {
+      return;
+    }
+    const finishedTaskId = selectedRunningMarketReviewTaskId;
+    setSelectedRunningMarketReviewTaskId(null);
+    void (async () => {
+      await refreshMarketReviewHistory(true);
+      const items = useStockPoolStore.getState().marketReviewHistoryItems;
+      const matched = items.find((item) => item.queryId === finishedTaskId);
+      const target = matched || items[0];
+      if (target?.id) {
+        await selectHistoryItem(target.id, false);
+      }
+    })();
+  }, [activeTasks, refreshMarketReviewHistory, selectHistoryItem, selectedRunningMarketReviewTaskId]);
 
   const [isDeletingStock, setIsDeletingStock] = useState(false);
   const handleDeleteStock = useCallback(async (stockCode: string) => {
@@ -814,6 +874,7 @@ const HomePage: React.FC = () => {
 
           if (status.status === 'completed') {
             stopMarketReviewPolling();
+            setSelectedRunningMarketReviewTaskId(null);
             const marketReviewText = typeof status.marketReviewReport === 'string'
               ? status.marketReviewReport
               : '';
@@ -832,6 +893,7 @@ const HomePage: React.FC = () => {
 
           if (status.status === 'failed') {
             stopMarketReviewPolling();
+            setSelectedRunningMarketReviewTaskId(null);
             setMarketReviewReport(null);
             setMarketReviewPayload(null);
             setMarketReviewError(
@@ -913,6 +975,9 @@ const HomePage: React.FC = () => {
       scrollMarketReviewFeedbackIntoView();
 
       if (result.taskId) {
+        setSelectedRunningMarketReviewTaskId(result.taskId);
+        setSidebarWorkspaceTab('history');
+        void refreshActiveTasks();
         await pollMarketReviewStatus(result.taskId);
       }
     } catch (err: unknown) {
@@ -922,7 +987,14 @@ const HomePage: React.FC = () => {
     } finally {
       setIsSubmittingMarketReview(false);
     }
-  }, [marketReviewRegionOverride, notify, pollMarketReviewStatus, scrollMarketReviewFeedbackIntoView, t]);
+  }, [
+    marketReviewRegionOverride,
+    notify,
+    pollMarketReviewStatus,
+    refreshActiveTasks,
+    scrollMarketReviewFeedbackIntoView,
+    t,
+  ]);
 
   const todayDateKey = getTodayInShanghai();
   useEffect(() => {
@@ -1187,29 +1259,49 @@ const HomePage: React.FC = () => {
   const mergedStockBarItems = useMemo<StockBarItem[]>(() => {
     const latestMarketReview = marketReviewHistoryItems[0];
     const stockItems = stockBarItems.filter((item) => item.stockCode !== 'MARKET');
-    if (!latestMarketReview) {
-      return stockItems;
+    const items: StockBarItem[] = [...stockItems];
+
+    if (latestMarketReview) {
+      items.unshift({
+        id: latestMarketReview.id,
+        stockCode: 'MARKET',
+        stockName: latestMarketReview.stockName || t('home.marketReview'),
+        reportType: 'market_review',
+        sentimentScore: latestMarketReview.sentimentScore,
+        operationAdvice: latestMarketReview.operationAdvice,
+        analysisCount: Math.max(marketReviewHistoryItems.length, 1),
+        lastAnalysisTime: latestMarketReview.createdAt,
+        modelUsed: latestMarketReview.modelUsed,
+        marketPhaseSummary: latestMarketReview.marketPhaseSummary,
+      });
     }
 
-    const marketReviewItem: StockBarItem = {
-      id: latestMarketReview.id,
-      stockCode: 'MARKET',
-      stockName: latestMarketReview.stockName || t('home.marketReview'),
-      reportType: 'market_review',
-      sentimentScore: latestMarketReview.sentimentScore,
-      operationAdvice: latestMarketReview.operationAdvice,
-      analysisCount: Math.max(marketReviewHistoryItems.length, 1),
-      lastAnalysisTime: latestMarketReview.createdAt,
-      modelUsed: latestMarketReview.modelUsed,
-      marketPhaseSummary: latestMarketReview.marketPhaseSummary,
-    };
+    if (activeMarketReviewTask) {
+      items.unshift({
+        id: RUNNING_MARKET_REVIEW_HISTORY_ID,
+        stockCode: 'MARKET',
+        stockName: activeMarketReviewTask.stockName || t('home.marketReview'),
+        reportType: 'market_review',
+        analysisCount: Math.max(marketReviewHistoryItems.length, 1),
+        lastAnalysisTime: activeMarketReviewTask.startedAt || activeMarketReviewTask.createdAt,
+        runningTaskId: activeMarketReviewTask.taskId,
+        runProgress: activeMarketReviewTask.progress,
+        runMessage: activeMarketReviewTask.message,
+      });
+    }
 
-    return [marketReviewItem, ...stockItems].sort((left, right) => {
+    return items.sort((left, right) => {
+      if (left.runningTaskId && !right.runningTaskId) {
+        return -1;
+      }
+      if (!left.runningTaskId && right.runningTaskId) {
+        return 1;
+      }
       const leftTime = left.lastAnalysisTime ? Date.parse(left.lastAnalysisTime) : 0;
       const rightTime = right.lastAnalysisTime ? Date.parse(right.lastAnalysisTime) : 0;
       return rightTime - leftTime;
     });
-  }, [marketReviewHistoryItems, stockBarItems, t]);
+  }, [activeMarketReviewTask, marketReviewHistoryItems, stockBarItems, t]);
 
   const sidebarContent = useMemo(
     () => (
@@ -1234,8 +1326,12 @@ const HomePage: React.FC = () => {
           watchlistAnalyzedTodayCount={watchlistAnalyzedTodayCount}
           historyItems={mergedStockBarItems}
           isLoadingHistory={isLoadingStockBar}
-          selectedStockCode={selectedReport?.meta.stockCode}
-          selectedRecordId={selectedReport?.meta.id}
+          selectedStockCode={selectedRunningMarketReviewTaskId ? 'MARKET' : selectedReport?.meta.stockCode}
+          selectedRecordId={
+            selectedRunningMarketReviewTaskId
+              ? RUNNING_MARKET_REVIEW_HISTORY_ID
+              : selectedReport?.meta.id
+          }
           onHistoryItemClick={handleHistoryItemClick}
           onDeleteStock={handleDeleteStock}
           isDeleting={isDeletingStock}
@@ -1258,6 +1354,7 @@ const HomePage: React.FC = () => {
       openTaskRunFlow,
       selectedReport?.meta.id,
       selectedReport?.meta.stockCode,
+      selectedRunningMarketReviewTaskId,
       sidebarWorkspaceTab,
       todayAnalysisItems,
       watchlistAnalyzedTodayCount,
@@ -1512,6 +1609,42 @@ const HomePage: React.FC = () => {
               />
             ) : null}
 
+            {selectedRunningMarketReviewTaskId && !marketReviewReport ? (
+              <div className="mb-3 home-subpanel p-4" data-testid="market-review-running-panel">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0 space-y-1">
+                    <div className="text-sm font-semibold text-foreground">
+                      {t('home.marketReviewInProgress')}
+                    </div>
+                    <p className="text-xs text-secondary-text">
+                      {activeMarketReviewTask?.message || t('home.marketReviewInProgressHint')}
+                    </p>
+                    {typeof activeMarketReviewTask?.progress === 'number' ? (
+                      <p className="text-xs text-cyan font-mono">
+                        {t('stockBar.runningProgress', {
+                          progress: Math.max(0, Math.min(99, activeMarketReviewTask.progress)),
+                        })}
+                        {activeMarketReviewTask.region ? ` · ${activeMarketReviewTask.region}` : ''}
+                      </p>
+                    ) : null}
+                  </div>
+                  <Button
+                    variant="home-action-ai"
+                    size="sm"
+                    onClick={() => {
+                      const task = activeMarketReviewTask
+                        || activeTasks.find((item) => item.taskId === selectedRunningMarketReviewTaskId);
+                      if (task) {
+                        openTaskRunFlow(task);
+                      }
+                    }}
+                  >
+                    {t('home.marketReviewOpenRunFlow')}
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+
             {error ? (
               <ApiErrorAlert
                 error={error}
@@ -1608,6 +1741,21 @@ const HomePage: React.FC = () => {
                     onLoadMore={() => void loadMoreStockHistory()}
                     onSelectRecord={(recordId) => void selectHistoryItem(recordId)}
                     onRetry={() => void openHistoryTrend()}
+                    runningMarketReview={
+                      selectedReport.meta.stockCode === 'MARKET' && activeMarketReviewTask
+                        ? {
+                            taskId: activeMarketReviewTask.taskId,
+                            progress: activeMarketReviewTask.progress,
+                            message: activeMarketReviewTask.message,
+                            region: activeMarketReviewTask.region,
+                          }
+                        : null
+                    }
+                    onOpenRunningRunFlow={
+                      selectedReport.meta.stockCode === 'MARKET' && activeMarketReviewTask
+                        ? () => openTaskRunFlow(activeMarketReviewTask)
+                        : undefined
+                    }
                   />
                 ) : (
                   <ReportSummary
@@ -1623,6 +1771,8 @@ const HomePage: React.FC = () => {
                   />
                 )}
               </div>
+            ) : !marketReviewReport && selectedRunningMarketReviewTaskId ? (
+              null
             ) : !marketReviewReport ? (
               <div className="flex h-full items-center justify-center">
                 <EmptyState

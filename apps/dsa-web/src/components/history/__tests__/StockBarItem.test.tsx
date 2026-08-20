@@ -220,4 +220,30 @@ describe('StockBarItemComponent', () => {
     expect(within(actions).queryByText('预警 28')).not.toBeInTheDocument();
     expect(within(actions).getByText(/28/)).toBeInTheDocument();
   });
+
+  it('renders running market-review badge and progress', () => {
+    render(
+      <StockBarItemComponent
+        item={{
+          id: -1,
+          stockCode: 'MARKET',
+          stockName: '大盘复盘',
+          reportType: 'market_review',
+          analysisCount: 1,
+          lastAnalysisTime: '2026-08-20T12:00:00Z',
+          runningTaskId: 'task-mr-1',
+          runProgress: 42,
+          runMessage: '正在执行美股复盘',
+        }}
+        isViewing
+        onClick={vi.fn()}
+      />,
+    );
+
+    const actions = screen.getByTestId('history-card-actions');
+    const meta = screen.getByTestId('history-card-meta');
+    expect(within(actions).getByText('进行中')).toBeVisible();
+    expect(within(meta).getByText('42%')).toBeVisible();
+    expect(within(meta).getByText('正在执行美股复盘')).toBeVisible();
+  });
 });

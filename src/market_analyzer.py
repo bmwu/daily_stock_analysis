@@ -31,7 +31,7 @@ from src.llm.backend_registry import (
 )
 from src.llm.generation_backend import GenerationError
 from src.schemas.market_light import MARKET_LIGHT_REGIONS, MarketLightSnapshot
-from src.services.run_diagnostics import record_llm_run, record_llm_run_started
+from src.services.run_diagnostics import record_llm_run, record_llm_run_started, record_market_review_stage
 from src.services.intelligence_service import IntelligenceService
 from data_provider.base import DataFetcherManager
 
@@ -1780,16 +1780,85 @@ Market conditions can change quickly. The data above is for reference only and d
     def _run_daily_review_parts(self) -> MarketLightReviewResult:
         """Run market review once and keep report/snapshot on the same overview."""
         logger.info("========== 开始大盘复盘分析 ==========")
+        region_label = {
+            "cn": "A 股",
+            "hk": "港股",
+            "us": "美股",
+            "jp": "日股",
+            "kr": "韩股",
+        }.get(self.region, self.region)
 
         # 1. 获取市场概览
+        overview_started = time.perf_counter()
+        record_market_review_stage(
+            node_id=f"mr_{self.region}_overview",
+            label=f"{region_label} · 市场概览",
+            status="running",
+            lane="data_source",
+            kind="data_source",
+            region=self.region,
+            message="正在拉取指数/涨跌统计/板块",
+        )
         overview = self.get_market_overview()
+        overview_ok = bool(getattr(overview, "indices", None))
+        record_market_review_stage(
+            node_id=f"mr_{self.region}_overview",
+            label=f"{region_label} · 市场概览",
+            status="success" if overview_ok else "degraded",
+            lane="data_source",
+            kind="data_source",
+            region=self.region,
+            message="市场概览已就绪" if overview_ok else "市场概览数据不完整",
+            duration_ms=int((time.perf_counter() - overview_started) * 1000),
+        )
 
         # 2. 搜索市场新闻
+        news_started = time.perf_counter()
+        record_market_review_stage(
+            node_id=f"mr_{self.region}_news",
+            label=f"{region_label} · 新闻舆情",
+            status="running",
+            lane="data_source",
+            kind="data_source",
+            region=self.region,
+            message="正在检索市场新闻",
+        )
         news = self.search_market_news()
         news = self._merge_persisted_market_intelligence(news)
+        news_count = len(news) if news else 0
+        record_market_review_stage(
+            node_id=f"mr_{self.region}_news",
+            label=f"{region_label} · 新闻舆情",
+            status="success" if news_count > 0 else "degraded",
+            lane="data_source",
+            kind="data_source",
+            region=self.region,
+            message=f"新闻 {news_count} 条" if news_count > 0 else "未获取到有效新闻",
+            duration_ms=int((time.perf_counter() - news_started) * 1000),
+        )
 
         # 3. 生成复盘报告
+        llm_started = time.perf_counter()
+        record_market_review_stage(
+            node_id=f"mr_{self.region}_llm",
+            label=f"{region_label} · 复盘生成",
+            status="running",
+            lane="analysis",
+            kind="model",
+            region=self.region,
+            message="正在调用模型生成复盘",
+        )
         report = self.generate_market_review(overview, news)
+        record_market_review_stage(
+            node_id=f"mr_{self.region}_llm",
+            label=f"{region_label} · 复盘生成",
+            status="success" if report else "failed",
+            lane="analysis",
+            kind="model",
+            region=self.region,
+            message="复盘正文已生成" if report else "复盘生成失败",
+            duration_ms=int((time.perf_counter() - llm_started) * 1000),
+        )
         snapshot = self.build_market_light_snapshot(overview) if self._supports_market_light() else None
         structured_payload = self.build_market_review_payload(
             overview,

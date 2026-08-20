@@ -591,7 +591,14 @@ export interface StockBarItem {
   lastAnalysisTime?: string;
   modelUsed?: string;
   marketPhaseSummary?: MarketPhaseSummary | null;
+  /** Present when this card represents an in-flight market-review task. */
+  runningTaskId?: string | null;
+  runProgress?: number | null;
+  runMessage?: string | null;
 }
+
+/** Sentinel history id for the in-flight MARKET review card in sidebar/trend lists. */
+export const RUNNING_MARKET_REVIEW_HISTORY_ID = -1;
 
 export interface StockBarResponse {
   total: number;

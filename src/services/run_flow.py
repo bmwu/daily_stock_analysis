@@ -144,6 +144,13 @@ def build_task_run_flow_snapshot(
             message=getattr(task, "message", None) or _task_status_message(flow_status),
         )
         _append_edge(edges, "task_queue", "analysis_pipeline", "control", flow_status, label="调度")
+        if _is_market_review_task(task):
+            _inject_market_review_planned_topology(
+                nodes,
+                edges,
+                region=getattr(task, "region", None),
+                flow_status=flow_status,
+            )
     else:
         _put_skeleton_tail(nodes, edges, anchor_node_id="task_queue", status=flow_status)
 
@@ -156,6 +163,8 @@ def build_task_run_flow_snapshot(
         flow_status=flow_status,
     )
     _prune_active_skeleton_tail(nodes, edges)
+    if _is_market_review_task(task):
+        _prune_market_review_duplicate_llm_nodes(nodes, edges)
 
     summary = _build_summary(
         nodes,
@@ -867,8 +876,150 @@ def _prune_active_skeleton_tail(
     remove_node_ids = set()
     if "llm" in nodes and any(node_id.startswith("llm_") for node_id in nodes):
         remove_node_ids.add("llm")
-    if "notification" in nodes and any(node_id.startswith("notification_") for node_id in nodes):
+    notification_node = nodes.get("notification")
+    notification_is_planned = bool(
+        isinstance(notification_node, Mapping)
+        and isinstance(notification_node.get("metadata"), Mapping)
+        and notification_node.get("metadata", {}).get("planned")
+    )
+    # Keep planned market-review notification placeholder so the live graph
+    # can light it up; only prune the generic skeleton stub.
+    if (
+        "notification" in nodes
+        and not notification_is_planned
+        and any(node_id.startswith("notification_") for node_id in nodes)
+    ):
         remove_node_ids.add("notification")
+    if not remove_node_ids:
+        return
+    for node_id in remove_node_ids:
+        nodes.pop(node_id, None)
+    edges[:] = [
+        edge
+        for edge in edges
+        if edge.get("from") not in remove_node_ids and edge.get("to") not in remove_node_ids
+    ]
+
+
+_MARKET_REVIEW_REGION_LABELS = {
+    "cn": "A 股",
+    "hk": "港股",
+    "us": "美股",
+    "jp": "日股",
+    "kr": "韩股",
+}
+
+_MARKET_REVIEW_REGION_STAGES = (
+    ("overview", "data_source", "data_source", "市场概览"),
+    ("news", "data_source", "data_source", "新闻舆情"),
+    ("llm", "analysis", "model", "复盘生成"),
+)
+
+
+def _is_market_review_task(task: Any) -> bool:
+    report_type = str(getattr(task, "report_type", "") or "").strip().lower()
+    stock_code = str(getattr(task, "stock_code", "") or "").strip().upper()
+    return report_type == "market_review" or stock_code in {"MARKET", "MARKET_REVIEW"}
+
+
+def _resolve_market_review_task_regions(region: Optional[Any]) -> List[str]:
+    raw = str(region or "cn").strip().lower()
+    if not raw:
+        return ["cn"]
+    if raw == "both":
+        return ["cn", "us"]
+    parts = [part.strip() for part in raw.replace(";", ",").split(",") if part.strip()]
+    ordered: List[str] = []
+    for part in parts:
+        if part in _MARKET_REVIEW_REGION_LABELS and part not in ordered:
+            ordered.append(part)
+    return ordered or ["cn"]
+
+
+def _inject_market_review_planned_topology(
+    nodes: Dict[str, Dict[str, Any]],
+    edges: List[Dict[str, Any]],
+    *,
+    region: Optional[Any],
+    flow_status: str,
+) -> None:
+    """Pre-create full market-review nodes so the live graph can light up stage-by-stage."""
+    regions = _resolve_market_review_task_regions(region)
+    previous_anchor = "analysis_pipeline" if "analysis_pipeline" in nodes else "task_queue"
+    pending_status = "pending"
+    control_status = "running" if flow_status == "running" else pending_status
+
+    for region_code in regions:
+        region_label = _MARKET_REVIEW_REGION_LABELS.get(region_code, region_code)
+        region_node_id = f"mr_{region_code}"
+        _put_node(
+            nodes,
+            region_node_id,
+            lane="analysis",
+            kind="analysis",
+            label=f"{region_label}复盘",
+            status=pending_status,
+            message="等待执行",
+            metadata={"planned": True, "region": region_code, "stage": "region"},
+        )
+        _append_edge(edges, previous_anchor, region_node_id, "control", control_status, label="市场")
+        stage_anchor = region_node_id
+        for stage_key, lane, kind, stage_label in _MARKET_REVIEW_REGION_STAGES:
+            node_id = f"mr_{region_code}_{stage_key}"
+            _put_node(
+                nodes,
+                node_id,
+                lane=lane,
+                kind=kind,
+                label=f"{region_label} · {stage_label}",
+                status=pending_status,
+                message="等待执行",
+                metadata={"planned": True, "region": region_code, "stage": stage_key},
+            )
+            _append_edge(edges, stage_anchor, node_id, "control", pending_status, label="下一步")
+            stage_anchor = node_id
+        previous_anchor = stage_anchor
+
+    _put_node(
+        nodes,
+        "history_save",
+        lane="artifact",
+        kind="artifact",
+        label="保存报告",
+        status=pending_status,
+        message="等待保存",
+        metadata={"planned": True, "stage": "history_save"},
+    )
+    _append_edge(edges, previous_anchor, "history_save", "control", pending_status, label="保存")
+    _put_node(
+        nodes,
+        "notification",
+        lane="artifact",
+        kind="notification",
+        label="推送通知",
+        status=pending_status,
+        message="等待通知",
+        metadata={"planned": True, "stage": "notification"},
+    )
+    _append_edge(edges, "history_save", "notification", "control", pending_status, label="通知")
+
+
+def _prune_market_review_duplicate_llm_nodes(
+    nodes: Dict[str, Dict[str, Any]],
+    edges: List[Dict[str, Any]],
+) -> None:
+    """Prefer planned mr_*_llm nodes over generic llm_market_review_* attempts on live graphs."""
+    has_planned_llm = any(
+        node_id.startswith("mr_") and node_id.endswith("_llm")
+        for node_id in nodes
+    )
+    if not has_planned_llm:
+        return
+    remove_node_ids = {
+        node_id
+        for node_id in nodes
+        if node_id.startswith("llm_market_review")
+    }
     if not remove_node_ids:
         return
     for node_id in remove_node_ids:
@@ -1259,6 +1410,19 @@ def _put_node(
     message: Optional[Any] = None,
     metadata: Optional[Any] = None,
 ) -> None:
+    previous = nodes.get(node_id)
+    previous_metadata = (
+        previous.get("metadata")
+        if isinstance(previous, Mapping) and isinstance(previous.get("metadata"), Mapping)
+        else {}
+    )
+    merged_metadata = dict(previous_metadata)
+    incoming_metadata = _sanitize_metadata(metadata or {})
+    if incoming_metadata:
+        merged_metadata.update(incoming_metadata)
+    # Preserve planned topology markers when stage/result events omit them.
+    if isinstance(previous_metadata, Mapping) and previous_metadata.get("planned") and "planned" not in merged_metadata:
+        merged_metadata["planned"] = previous_metadata.get("planned")
     payload = {
         "id": node_id,
         "lane": lane,
@@ -1266,13 +1430,15 @@ def _put_node(
         "label": _safe_text(label, max_length=80) or node_id,
         "status": _valid_status(status),
         "provider": _safe_text(provider, max_length=120),
-        "started_at": _datetime_to_iso(started_at),
+        "started_at": _datetime_to_iso(started_at) or (
+            previous.get("started_at") if isinstance(previous, Mapping) else None
+        ),
         "ended_at": _datetime_to_iso(ended_at),
         "duration_ms": _safe_int(duration_ms),
         "attempts": _safe_int(attempts),
         "record_count": _safe_int(record_count),
         "message": _safe_text(message, max_length=220),
-        "metadata": _sanitize_metadata(metadata or {}),
+        "metadata": merged_metadata,
     }
     nodes[node_id] = {key: value for key, value in payload.items() if value not in (None, {}, [])}
 

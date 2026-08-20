@@ -303,7 +303,8 @@ class AnalysisApiContractTestCase(unittest.TestCase):
         task_queue.submit_background_task.assert_called_once()
         args, kwargs = task_queue.submit_background_task.call_args
         self.assertTrue(callable(args[0]))
-        self.assertEqual(kwargs["stock_code"], "market_review")
+        self.assertEqual(kwargs["stock_code"], "MARKET")
+        self.assertEqual(kwargs["report_type"], "market_review")
         self.assertEqual(kwargs["stock_name"], "大盘复盘")
         self.assertEqual(kwargs["message"], "大盘复盘任务已提交")
         self.assertEqual(kwargs["region"], "cn")

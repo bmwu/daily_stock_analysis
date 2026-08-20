@@ -1268,6 +1268,104 @@ class RunFlowTestCase(unittest.TestCase):
             fail_open=True,
         )
 
+    def test_active_market_review_task_injects_planned_topology(self) -> None:
+        task = TaskInfo(
+            task_id="market-live-1",
+            stock_code="MARKET",
+            stock_name="大盘复盘",
+            status=TaskStatus.PROCESSING,
+            report_type="market_review",
+            region="cn,us",
+            message="正在执行美股复盘",
+            progress=40,
+            started_at=datetime.now(),
+        )
+        snapshot = build_task_run_flow_snapshot(task)
+        node_ids = {node.id for node in snapshot.nodes}
+
+        for expected in (
+            "mr_cn",
+            "mr_cn_overview",
+            "mr_cn_news",
+            "mr_cn_llm",
+            "mr_us",
+            "mr_us_overview",
+            "mr_us_news",
+            "mr_us_llm",
+            "history_save",
+            "notification",
+        ):
+            self.assertIn(expected, node_ids)
+
+        pending_nodes = {
+            node.id: node.status
+            for node in snapshot.nodes
+            if node.id.startswith("mr_") or node.id in {"history_save", "notification"}
+        }
+        self.assertTrue(pending_nodes)
+        self.assertTrue(all(status == "pending" for status in pending_nodes.values()))
+
+    def test_active_market_review_stage_events_light_up_planned_nodes(self) -> None:
+        task = TaskInfo(
+            task_id="market-live-2",
+            stock_code="MARKET",
+            stock_name="大盘复盘",
+            status=TaskStatus.PROCESSING,
+            report_type="market_review",
+            region="cn",
+            started_at=datetime.now(),
+            flow_events=[
+                {
+                    "timestamp": "2026-08-20T12:00:01",
+                    "severity": "info",
+                    "type": "market_review_stage",
+                    "node_id": "mr_cn_overview",
+                    "title": "A 股 · 市场概览",
+                    "message": "正在拉取指数",
+                    "metadata": {
+                        "region": "cn",
+                        "node": {
+                            "id": "mr_cn_overview",
+                            "lane": "data_source",
+                            "kind": "data_source",
+                            "label": "A 股 · 市场概览",
+                            "status": "running",
+                            "message": "正在拉取指数",
+                            "metadata": {"planned": True, "region": "cn", "stage": "overview"},
+                        },
+                    },
+                },
+                {
+                    "timestamp": "2026-08-20T12:00:05",
+                    "severity": "success",
+                    "type": "market_review_stage",
+                    "node_id": "mr_cn_overview",
+                    "title": "A 股 · 市场概览",
+                    "message": "市场概览已就绪",
+                    "metadata": {
+                        "region": "cn",
+                        "node": {
+                            "id": "mr_cn_overview",
+                            "lane": "data_source",
+                            "kind": "data_source",
+                            "label": "A 股 · 市场概览",
+                            "status": "success",
+                            "message": "市场概览已就绪",
+                            "duration_ms": 4000,
+                            "metadata": {"planned": True, "region": "cn", "stage": "overview"},
+                        },
+                    },
+                },
+            ],
+        )
+        snapshot = build_task_run_flow_snapshot(task)
+        overview = next(node for node in snapshot.nodes if node.id == "mr_cn_overview")
+        news = next(node for node in snapshot.nodes if node.id == "mr_cn_news")
+        self.assertEqual(overview.status, "success")
+        self.assertEqual(news.status, "pending")
+        self.assertTrue(any(event.type == "market_review_stage" for event in snapshot.events))
+        self.assertFalse(any(node.id.startswith("llm_market_review") for node in snapshot.nodes))
+
     def test_run_flow_payload_redacts_errors_metadata_and_sensitive_paths(self) -> None:
         context_snapshot = {
             "diagnostics": _diagnostics(unsafe=True),

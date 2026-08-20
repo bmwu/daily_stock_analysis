@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [新功能] 大盘复盘进行中时，历史趋势/侧栏插入「进行中」卡片，可打开实时运行流；后端预置各市场 planned 拓扑，阶段事件逐步点亮节点，未完成节点保持灰色。
 - [chore] 新增本地开发脚本 `scripts/dev-up.sh` 与 `scripts/dev-down.sh`：一键拉起/停止后端与前端；前端默认固定 `5173`，端口占用时自动清理后重试。
 - [chore] 新增 `scripts/dev-restart.sh`：按 `dev-down` + `dev-up` 顺序一键重启本地前后端开发服务。
 - [chore] `scripts/dev-up.sh` 新增后端健康检查等待（默认最多 30 秒）后再启动前端，降低启动阶段前端代理 `8000` 失败导致的首屏报错概率。

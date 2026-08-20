@@ -16,6 +16,7 @@ GET /api/v1/history/{record_id}/diagnostics
 - 诊断面板支持复制后端生成的脱敏 `copy_text`，用于 issue 或部署排障。
 - 分析链路在保存历史后会补齐任务/Provider/LLM/通知诊断到 `context_snapshot.diagnostics`，历史诊断接口统一聚合为用户可读摘要。
 - 首页运行流面板复用同一 RunFlowSnapshot 契约展示 active task、completed report 与大盘复盘；active task 通过任务 SSE 的可选增量事件实时追加事件流，完成或断线后再 refetch 快照保证最终一致。
+- 大盘复盘 live 任务会预注入 planned 拓扑（`mr_{region}` / `mr_{region}_overview|news|llm` / `history_save` / `notification`），并通过 `market_review_stage` 事件按阶段更新节点状态；历史趋势侧栏对进行中任务展示虚拟「进行中」卡片，打开运行流时走 `source: { type: 'task', taskId }`。
 
 ## 运行流实时增量
 

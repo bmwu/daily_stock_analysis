@@ -73,7 +73,15 @@ export const StockBarItemComponent: React.FC<StockBarItemProps> = ({
               </span>
             </div>
             <div className="flex items-center gap-1 shrink-0" data-testid="history-card-actions">
-              {isMarketReview ? (
+              {item.runningTaskId ? (
+                <Badge
+                  variant="info"
+                  size="sm"
+                  className="shrink-0 shadow-none text-[10px] font-semibold leading-none animate-pulse"
+                >
+                  {t('stockBar.running')}
+                </Badge>
+              ) : isMarketReview ? (
                 <Badge
                   variant="default"
                   size="sm"
@@ -123,7 +131,23 @@ export const StockBarItemComponent: React.FC<StockBarItemProps> = ({
             <span className="text-[11px] text-secondary-text font-mono">
               {item.stockCode}
             </span>
-            {item.lastAnalysisTime && (
+            {item.runningTaskId && typeof item.runProgress === 'number' ? (
+              <>
+                <span className="w-1 h-1 rounded-full bg-subtle-hover" />
+                <span className="text-[11px] text-cyan">
+                  {t('stockBar.runningProgress', { progress: Math.max(0, Math.min(99, item.runProgress)) })}
+                </span>
+              </>
+            ) : null}
+            {item.runningTaskId && item.runMessage ? (
+              <>
+                <span className="w-1 h-1 rounded-full bg-subtle-hover" />
+                <span className="text-[11px] text-muted-text truncate max-w-[9rem]" title={item.runMessage}>
+                  {item.runMessage}
+                </span>
+              </>
+            ) : null}
+            {item.lastAnalysisTime && !item.runningTaskId && (
               <>
                 <span className="w-1 h-1 rounded-full bg-subtle-hover" />
                 <span className="text-[11px] text-muted-text">

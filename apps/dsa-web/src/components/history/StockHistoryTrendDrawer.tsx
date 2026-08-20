@@ -28,6 +28,13 @@ interface StockHistoryTrendDrawerProps {
   onLoadMore: () => void;
   onSelectRecord: (recordId: number) => void;
   onRetry: () => void;
+  runningMarketReview?: {
+    taskId: string;
+    progress?: number;
+    message?: string;
+    region?: string;
+  } | null;
+  onOpenRunningRunFlow?: () => void;
 }
 
 const RANGE_OPTIONS: Array<{ value: StockHistoryRange; labelKey: UiTextKey }> = [
@@ -185,6 +192,8 @@ export const StockHistoryTrendDrawer: React.FC<StockHistoryTrendDrawerProps> = (
   onLoadMore,
   onSelectRecord,
   onRetry,
+  runningMarketReview = null,
+  onOpenRunningRunFlow,
 }) => {
   const { t } = useUiLanguage();
   const currentRecordId = report.meta.id;
@@ -269,6 +278,32 @@ export const StockHistoryTrendDrawer: React.FC<StockHistoryTrendDrawerProps> = (
           </div>
 
           <Card variant="bordered" padding="md" className="home-panel-card">
+            {runningMarketReview ? (
+              <div
+                className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-cyan/30 bg-cyan/5 px-3 py-2.5"
+                data-testid="stock-trend-running-market-review"
+              >
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-foreground">{t('home.marketReviewInProgress')}</p>
+                  <p className="mt-0.5 text-xs text-secondary-text">
+                    {runningMarketReview.message || t('home.marketReviewInProgressHint')}
+                  </p>
+                  {typeof runningMarketReview.progress === 'number' ? (
+                    <p className="mt-1 font-mono text-xs text-cyan">
+                      {t('stockBar.runningProgress', {
+                        progress: Math.max(0, Math.min(99, runningMarketReview.progress)),
+                      })}
+                      {runningMarketReview.region ? ` · ${runningMarketReview.region}` : ''}
+                    </p>
+                  ) : null}
+                </div>
+                {onOpenRunningRunFlow ? (
+                  <Button variant="home-action-ai" size="sm" onClick={onOpenRunningRunFlow}>
+                    {t('home.marketReviewOpenRunFlow')}
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h3 className="text-base font-semibold text-foreground">{t('stockTrend.records')}</h3>

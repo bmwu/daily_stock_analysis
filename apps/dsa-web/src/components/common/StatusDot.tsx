@@ -14,7 +14,8 @@ const TONE_STYLES: Record<StatusDotTone, string> = {
   warning: 'bg-warning shadow-[0_0_0_3px_hsl(var(--warning)/0.14)]',
   danger: 'bg-danger shadow-[0_0_0_3px_hsl(var(--destructive)/0.12)]',
   info: 'bg-cyan shadow-[0_0_0_3px_hsl(var(--primary)/0.12)]',
-  neutral: 'bg-muted-text shadow-[0_0_0_3px_hsl(var(--muted-text)/0.12)]',
+  // Pending / unknown / cancelled: muted gray chip (not tinted success/info).
+  neutral: 'bg-slate-400/80 shadow-[0_0_0_3px_rgb(148_163_184_/_0.18)] dark:bg-slate-500',
 };
 
 export const StatusDot: React.FC<StatusDotProps> = ({

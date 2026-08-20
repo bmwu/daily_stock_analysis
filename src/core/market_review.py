@@ -27,6 +27,7 @@ from src.llm.generation_backend import GenerationError
 from src.services.run_diagnostics import (
     current_diagnostic_snapshot,
     record_history_run,
+    record_market_review_stage,
     record_notification_run,
 )
 from src.schemas.market_light import MARKET_LIGHT_REGIONS
@@ -56,6 +57,31 @@ class MarketReviewRunResult:
 
     report: str
     market_review_payload: Dict[str, Any] = field(default_factory=dict)
+
+
+def _update_market_review_task_progress(
+    task_id: Optional[str],
+    *,
+    finished_markets: int,
+    total_markets: int,
+    label: str,
+    done: bool = False,
+) -> None:
+    """Best-effort progress update for live market-review tasks."""
+    if not task_id or total_markets <= 0:
+        return
+    try:
+        from src.services.task_queue import get_task_queue
+
+        if done:
+            progress = int(finished_markets / total_markets * 90)
+            message = f"{label}复盘完成（{finished_markets}/{total_markets}）"
+        else:
+            progress = int(finished_markets / total_markets * 90)
+            message = f"正在复盘{label}（{finished_markets + 1}/{total_markets}）"
+        get_task_queue().update_task_progress(task_id, progress, message)
+    except Exception as exc:
+        logger.debug("更新大盘复盘任务进度失败（fail-open）: %s", exc)
 
 
 def _refresh_market_review_history_diagnostics(*, query_id: str) -> None:
@@ -219,6 +245,8 @@ def run_market_review(
             parts = []
             market_light_snapshots: Dict[str, Dict[str, Any]] = {}
             market_review_payloads: Dict[str, Dict[str, Any]] = {}
+            total_markets = len([m for m, _, _ in _MARKET_REVIEW_MARKETS if m in run_markets])
+            finished_markets = 0
             for mkt, title_key, label in _MARKET_REVIEW_MARKETS:
                 if mkt not in run_markets:
                     continue
@@ -229,6 +257,21 @@ def run_market_review(
                     history_query_id,
                     mkt,
                     label,
+                )
+                record_market_review_stage(
+                    node_id=f"mr_{mkt}",
+                    label=f"{label}复盘",
+                    status="running",
+                    lane="analysis",
+                    kind="analysis",
+                    region=mkt,
+                    message=f"开始执行 {label} 复盘",
+                )
+                _update_market_review_task_progress(
+                    history_query_id,
+                    finished_markets=finished_markets,
+                    total_markets=total_markets,
+                    label=label,
                 )
                 mkt_analyzer = MarketAnalyzer(
                     search_service=search_service,
@@ -247,6 +290,23 @@ def run_market_review(
                     review_result,
                     region=mkt,
                     report=mkt_report,
+                )
+                finished_markets += 1
+                record_market_review_stage(
+                    node_id=f"mr_{mkt}",
+                    label=f"{label}复盘",
+                    status="success" if mkt_report else "degraded",
+                    lane="analysis",
+                    kind="analysis",
+                    region=mkt,
+                    message="市场复盘完成" if mkt_report else "市场复盘无正文",
+                )
+                _update_market_review_task_progress(
+                    history_query_id,
+                    finished_markets=finished_markets,
+                    total_markets=total_markets,
+                    label=label,
+                    done=True,
                 )
                 if mkt_report:
                     parts.append(f"{review_text[title_key]}\n\n{mkt_report}")
@@ -267,6 +327,21 @@ def run_market_review(
                 history_query_id,
                 run_region,
                 label,
+            )
+            record_market_review_stage(
+                node_id=f"mr_{run_region}",
+                label=f"{label}复盘",
+                status="running",
+                lane="analysis",
+                kind="analysis",
+                region=run_region,
+                message=f"开始执行 {label} 复盘",
+            )
+            _update_market_review_task_progress(
+                history_query_id,
+                finished_markets=0,
+                total_markets=1,
+                label=label,
             )
             market_analyzer = MarketAnalyzer(
                 search_service=search_service,
@@ -289,6 +364,22 @@ def run_market_review(
                     report=review_report,
                 )
             }
+            record_market_review_stage(
+                node_id=f"mr_{run_region}",
+                label=f"{label}复盘",
+                status="success" if review_report else "degraded",
+                lane="analysis",
+                kind="analysis",
+                region=run_region,
+                message="市场复盘完成" if review_report else "市场复盘无正文",
+            )
+            _update_market_review_task_progress(
+                history_query_id,
+                finished_markets=1,
+                total_markets=1,
+                label=label,
+                done=True,
+            )
         
         if review_report:
             market_review_payload = _build_combined_market_review_payload(

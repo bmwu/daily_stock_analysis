@@ -985,6 +985,85 @@ def record_llm_run_started(
         logger.warning("llm started diagnostic record failed: %s", exc)
 
 
+def record_market_review_stage(
+    *,
+    node_id: str,
+    label: str,
+    status: str,
+    lane: str = "analysis",
+    kind: str = "analysis",
+    region: Optional[str] = None,
+    message: Optional[Any] = None,
+    provider: Optional[str] = None,
+    duration_ms: Optional[int] = None,
+) -> None:
+    """Emit a live market-review stage event that upserts a stable planned node."""
+    context = get_current_diagnostic_context()
+    if context is None:
+        return
+
+    try:
+        normalized_status = str(status or "unknown").strip().lower() or "unknown"
+        severity = {
+            "success": "success",
+            "failed": "danger",
+            "degraded": "warning",
+            "fallback": "warning",
+            "skipped": "warning",
+            "empty": "warning",
+            "running": "info",
+            "pending": "info",
+        }.get(normalized_status, "info")
+        flow_status = "degraded" if normalized_status == "empty" else normalized_status
+        if flow_status == "empty":
+            flow_status = "degraded"
+        title = sanitize_diagnostic_text(label, max_length=80) or node_id
+        safe_message = sanitize_diagnostic_text(message, max_length=220)
+        now = datetime.now().isoformat(timespec="seconds")
+        node_meta: Dict[str, Any] = {
+            "id": node_id,
+            "lane": lane,
+            "kind": kind,
+            "label": title,
+            "status": flow_status,
+            "provider": sanitize_diagnostic_text(provider, max_length=80),
+            "duration_ms": duration_ms,
+            "message": safe_message,
+            "metadata": {
+                "planned": True,
+                "region": region,
+                "stage": True,
+            },
+        }
+        if flow_status == "running":
+            node_meta["started_at"] = now
+        elif flow_status in {"success", "failed", "degraded", "fallback", "skipped"}:
+            node_meta["ended_at"] = now
+            if duration_ms is not None:
+                try:
+                    started = datetime.now() - timedelta(milliseconds=max(0, int(duration_ms)))
+                    node_meta["started_at"] = started.isoformat(timespec="seconds")
+                except Exception:
+                    pass
+
+        context._emit_flow_event(
+            {
+                "timestamp": now,
+                "severity": severity,
+                "type": "market_review_stage",
+                "node_id": node_id,
+                "title": title,
+                "message": safe_message,
+                "metadata": {
+                    "region": region,
+                    "node": {key: value for key, value in node_meta.items() if value is not None},
+                },
+            }
+        )
+    except Exception as exc:  # pragma: no cover - defensive fail-open guard
+        logger.warning("market-review stage diagnostic record failed: %s", exc)
+
+
 def record_notification_run(
     *,
     channel: str,
