@@ -1176,13 +1176,25 @@ def start_api_server(host: str, port: int, config: Config) -> None:
     import threading
     import uvicorn
 
-    probe = socket.socket(socket.AF_INET6 if ":" in host else socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        probe.bind((host, port))
-    except OSError as exc:
-        raise RuntimeError(f"FastAPI port is not available: {host}:{port}") from exc
-    finally:
-        probe.close()
+    # Restart scripts may free the port a moment before bind; retry briefly to
+    # avoid a false "port unavailable" that drops --serve into headless schedule.
+    bind_error: Optional[OSError] = None
+    for attempt in range(6):
+        probe = socket.socket(
+            socket.AF_INET6 if ":" in host else socket.AF_INET,
+            socket.SOCK_STREAM,
+        )
+        try:
+            probe.bind((host, port))
+            bind_error = None
+            break
+        except OSError as exc:
+            bind_error = exc
+            time.sleep(0.5)
+        finally:
+            probe.close()
+    if bind_error is not None:
+        raise RuntimeError(f"FastAPI port is not available: {host}:{port}") from bind_error
 
     level_name = (config.log_level or "INFO").lower()
     use_config_signal_handlers = True
@@ -1540,7 +1552,9 @@ def main() -> int:
             bot_clients_started = True
         except Exception as e:
             logger.error(f"启动 FastAPI 服务失败: {e}")
-            if args.serve_only:
+            # --serve / --serve-only 都要求 API 可用；失败后不能静默退化成无 Web 的 CLI 定时模式，
+            # 否则前端代理会看到连接失败/HTTP 500，而进程仍看似“已启动”。
+            if args.serve or args.serve_only:
                 return 1
             start_serve = False
 

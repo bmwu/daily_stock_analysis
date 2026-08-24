@@ -96,6 +96,22 @@ kill_port_conflict() {
   fi
 }
 
+wait_port_free() {
+  local port="$1"
+  local label="$2"
+  local timeout_seconds="${3:-10}"
+  local waited=0
+  while [[ "${waited}" -lt "${timeout_seconds}" ]]; do
+    if [[ -z "$(lsof -ti "tcp:${port}" || true)" ]]; then
+      return 0
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  echo "[dev-up] 等待 ${label}端口 ${port} 释放超时（${timeout_seconds}s）"
+  return 1
+}
+
 backend_process_matches_mode() {
   local pids
   local pid
@@ -165,6 +181,7 @@ else
   fi
   if [[ "${BACKEND_KILL_PORT_CONFLICT}" == "1" ]]; then
     kill_port_conflict "${BACKEND_PORT}" "后端"
+    wait_port_free "${BACKEND_PORT}" "后端" 15 || true
   fi
   echo "[dev-up] 启动后端: ${PYTHON_BIN} main.py ${BACKEND_SERVE_FLAG} --host ${BACKEND_HOST} --port ${BACKEND_PORT}"
   (
@@ -174,7 +191,10 @@ else
   )
   echo "[dev-up] 等待后端健康检查就绪（最多 ${BACKEND_WAIT_SECONDS}s）..."
   if ! wait_backend_ready "${BACKEND_WAIT_SECONDS}"; then
-    echo "[dev-up] 后端在等待窗口内未就绪，前端仍会继续启动；请检查日志: ${BACKEND_LOG_FILE}"
+    echo "[dev-up] 后端在等待窗口内未就绪，请检查日志: ${BACKEND_LOG_FILE}"
+    if [[ -n "$(cat "${BACKEND_PID_FILE}" 2>/dev/null || true)" ]]; then
+      echo "[dev-up] 提示: 若日志出现 FastAPI port is not available，先执行 bash scripts/dev-down.sh 再重试"
+    fi
   fi
 fi
 

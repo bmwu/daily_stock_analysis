@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 - [修复] `scripts/dev-up.sh` 默认改为 `main.py --serve`，启用 runtime scheduler（配合 `SCHEDULE_ENABLED` 到点分析并推送）；可用 `BACKEND_MODE=serve-only` 回退为仅 API。启动时若已有 `--serve-only` 进程会按目标模式重启，避免误复用导致飞书等定时通知不发。
+- [修复] `--serve` 启动 FastAPI 失败时不再静默退化成无 Web 的 CLI 定时模式；端口探测增加短暂重试，`dev-up` 在杀端口后等待释放，避免前端代理出现 HTTP 500。
 - [改进] `MINIMAX_API_KEYS` 未配置时自动复用 `LLM_MINIMAX_API_KEY` 做新闻搜索，避免只配了 MiniMax 模型却仍落到公共 SearXNG。
 - [改进] SearXNG 公共实例对 429/403/418/503/浏览器验证墙/HTML 假响应做分类冷却，单次最多试 6 个实例；公共模式不再误提示检查 settings.yml，失败文案改为建议配置付费搜索或自建。
 - [新功能] 大盘复盘进行中时，历史趋势/侧栏插入「进行中」卡片，可打开实时运行流；后端预置各市场 planned 拓扑，阶段事件逐步点亮节点，未完成节点保持灰色。
