@@ -14,11 +14,25 @@ FRONTEND_PORT="${FRONTEND_PORT:-5173}"
 FRONTEND_HOST="${FRONTEND_HOST:-127.0.0.1}"
 BACKEND_HOST="${BACKEND_HOST:-127.0.0.1}"
 BACKEND_PORT="${BACKEND_PORT:-8000}"
+# serve: API + runtime scheduler（读取 SCHEDULE_ENABLED / SCHEDULE_SLOTS，到点推送）
+# serve-only: 仅 API，不启动定时分析（不会自动发飞书等通知）
+BACKEND_MODE="${BACKEND_MODE:-serve}"
 FRONTEND_KILL_PORT_CONFLICT="${FRONTEND_KILL_PORT_CONFLICT:-1}"
+BACKEND_KILL_PORT_CONFLICT="${BACKEND_KILL_PORT_CONFLICT:-1}"
 BACKEND_REUSE_IF_RUNNING="${BACKEND_REUSE_IF_RUNNING:-1}"
 BACKEND_WAIT_SECONDS="${BACKEND_WAIT_SECONDS:-30}"
 
 mkdir -p "${RUNTIME_DIR}"
+
+case "${BACKEND_MODE}" in
+  serve|serve-only)
+    BACKEND_SERVE_FLAG="--${BACKEND_MODE}"
+    ;;
+  *)
+    echo "[dev-up] 无效 BACKEND_MODE=${BACKEND_MODE}，允许值: serve | serve-only"
+    exit 1
+    ;;
+esac
 
 pick_python() {
   if command -v python3 >/dev/null 2>&1; then
@@ -60,24 +74,51 @@ stop_by_pid_file() {
   rm -f "${pid_file}"
 }
 
-kill_frontend_port_conflict() {
+kill_port_conflict() {
+  local port="$1"
+  local label="$2"
   local pids
-  pids="$(lsof -ti "tcp:${FRONTEND_PORT}" || true)"
+  pids="$(lsof -ti "tcp:${port}" || true)"
   if [[ -z "${pids}" ]]; then
     return
   fi
 
-  echo "[dev-up] 端口 ${FRONTEND_PORT} 已被占用，正在清理进程: ${pids}"
+  echo "[dev-up] ${label}端口 ${port} 已被占用，正在清理进程: ${pids}"
   for pid in ${pids}; do
     kill "${pid}" >/dev/null 2>&1 || true
   done
   sleep 1
-  pids="$(lsof -ti "tcp:${FRONTEND_PORT}" || true)"
+  pids="$(lsof -ti "tcp:${port}" || true)"
   if [[ -n "${pids}" ]]; then
     for pid in ${pids}; do
       kill -9 "${pid}" >/dev/null 2>&1 || true
     done
   fi
+}
+
+backend_process_matches_mode() {
+  local pids
+  local pid
+  local args
+  pids="$(lsof -ti "tcp:${BACKEND_PORT}" || true)"
+  if [[ -z "${pids}" ]]; then
+    return 1
+  fi
+  for pid in ${pids}; do
+    args="$(ps -p "${pid}" -o args= 2>/dev/null || true)"
+    if [[ "${args}" != *"main.py"* ]]; then
+      continue
+    fi
+    # --serve 是 --serve-only 的子串，必须分开判断，避免误复用 serve-only 进程
+    if [[ "${BACKEND_MODE}" == "serve-only" ]]; then
+      if [[ "${args}" == *"--serve-only"* ]]; then
+        return 0
+      fi
+    elif [[ "${args}" == *"--serve"* && "${args}" != *"--serve-only"* ]]; then
+      return 0
+    fi
+  done
+  return 1
 }
 
 backend_health_ok() {
@@ -113,16 +154,22 @@ stop_by_pid_file "${BACKEND_PID_FILE}"
 stop_by_pid_file "${FRONTEND_PID_FILE}"
 
 if [[ "${FRONTEND_KILL_PORT_CONFLICT}" == "1" ]]; then
-  kill_frontend_port_conflict
+  kill_port_conflict "${FRONTEND_PORT}" "前端"
 fi
 
-if [[ "${BACKEND_REUSE_IF_RUNNING}" == "1" ]] && backend_health_ok; then
-  echo "[dev-up] 检测到后端已运行，复用现有服务: http://${BACKEND_HOST}:${BACKEND_PORT}"
+if [[ "${BACKEND_REUSE_IF_RUNNING}" == "1" ]] && backend_health_ok && backend_process_matches_mode; then
+  echo "[dev-up] 检测到后端已按 ${BACKEND_SERVE_FLAG} 运行，复用现有服务: http://${BACKEND_HOST}:${BACKEND_PORT}"
 else
-  echo "[dev-up] 启动后端: ${PYTHON_BIN} main.py --serve-only --host ${BACKEND_HOST} --port ${BACKEND_PORT}"
+  if [[ "${BACKEND_REUSE_IF_RUNNING}" == "1" ]] && backend_health_ok; then
+    echo "[dev-up] 现有后端模式与 BACKEND_MODE=${BACKEND_MODE} 不一致，将重启为 ${BACKEND_SERVE_FLAG}"
+  fi
+  if [[ "${BACKEND_KILL_PORT_CONFLICT}" == "1" ]]; then
+    kill_port_conflict "${BACKEND_PORT}" "后端"
+  fi
+  echo "[dev-up] 启动后端: ${PYTHON_BIN} main.py ${BACKEND_SERVE_FLAG} --host ${BACKEND_HOST} --port ${BACKEND_PORT}"
   (
     cd "${ROOT_DIR}"
-    nohup "${PYTHON_BIN}" main.py --serve-only --host "${BACKEND_HOST}" --port "${BACKEND_PORT}" >>"${BACKEND_LOG_FILE}" 2>&1 &
+    nohup "${PYTHON_BIN}" main.py "${BACKEND_SERVE_FLAG}" --host "${BACKEND_HOST}" --port "${BACKEND_PORT}" >>"${BACKEND_LOG_FILE}" 2>&1 &
     echo $! >"${BACKEND_PID_FILE}"
   )
   echo "[dev-up] 等待后端健康检查就绪（最多 ${BACKEND_WAIT_SECONDS}s）..."
@@ -158,5 +205,8 @@ else
 fi
 
 echo "[dev-up] 前端地址: http://${FRONTEND_HOST}:${FRONTEND_PORT}"
-echo "[dev-up] 后端地址: http://${BACKEND_HOST}:${BACKEND_PORT}"
+echo "[dev-up] 后端地址: http://${BACKEND_HOST}:${BACKEND_PORT} (${BACKEND_SERVE_FLAG})"
+if [[ "${BACKEND_MODE}" == "serve" ]]; then
+  echo "[dev-up] 已启用 runtime scheduler（依赖 .env 中 SCHEDULE_ENABLED / SCHEDULE_SLOTS）"
+fi
 echo "[dev-up] 停止服务: bash scripts/dev-down.sh"
